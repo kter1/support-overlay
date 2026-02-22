@@ -1,6 +1,6 @@
-# IISL — Issue Resolution Integrity Layer (Phase 1 Pilot)
+# IRIL — Issue Resolution Integrity Layer (Phase 1 Pilot)
 
-Implementation of the IISL spec v1.1.3. A Zendesk sidebar app for support agents resolving refund-related tickets, backed by a Node.js API, Postgres, and a DB-backed outbox worker.
+Implementation of the IRIL spec v1.1.3. A Zendesk sidebar app for support agents resolving refund-related tickets, backed by a Node.js API, Postgres, and a DB-backed outbox worker.
 
 ---
 
