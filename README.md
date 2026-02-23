@@ -2,7 +2,6 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ktp-01/support_overlay/ci.yml)](https://github.com/ktp-01/support_overlay/actions)
 [![License](https://img.shields.io/github/license/ktp-01/support_overlay)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/ktp-01/support_overlay)](https://github.com/ktp-01/support_overlay/releases)
 
 IRIL: Issue Resolution Integrity Layer.
 
@@ -97,4 +96,3 @@ See `CONTRIBUTING.md`.
 ## License
 
 MIT. See `LICENSE`.
-
