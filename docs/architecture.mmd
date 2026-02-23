@@ -1,0 +1,19 @@
+graph LR
+  subgraph UI
+    ZS[Zendesk Sidebar]
+  end
+
+  subgraph Backend
+    API[Fastify API (:3001)]
+    Worker[Outbox Worker]
+  end
+
+  DB[(Postgres :5432)]
+
+  ZS -->|HTTP/REST JSON| API
+  API -->|Reads/Writes| DB
+  API -->|Enqueues outbox events| DB
+  Worker -->|Polls outbox rows| DB
+  Worker -->|HTTPS| StripeAPI[Stripe API]
+  Worker -->|HTTPS| ShopifyAPI[Shopify API]
+  Worker -->|HTTPS| ZendeskAPI[Zendesk API]

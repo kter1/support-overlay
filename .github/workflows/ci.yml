@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18.x, 22.x]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare environment file
+        run: cp infra/.env.example .env
+
+      - name: Start demo services
+        run: |
+          mkdir -p .tmp/ci-logs
+          npm run demo:start > .tmp/ci-logs/demo-start.log 2>&1 &
+          echo $! > .tmp/demo-start.pid
+
+      - name: Wait for API and sidebar
+        run: |
+          for i in {1..90}; do
+            if curl -fsS http://127.0.0.1:3001/health >/dev/null && curl -fsS http://127.0.0.1:5173 >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Services did not become ready in time"
+          tail -n 300 .tmp/ci-logs/demo-start.log || true
+          exit 1
+
+      - name: Run smoke tests
+        run: npm run demo:smoke
+
+      - name: Stop services
+        if: always()
+        run: |
+          if [ -f .tmp/demo-start.pid ]; then
+            kill "$(cat .tmp/demo-start.pid)" || true
+          fi
+          npm run infra:down || true
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs
+          path: .tmp/ci-logs

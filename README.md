@@ -1,267 +1,103 @@
-# IRIL — Issue Resolution Integrity Layer (Phase 1 Pilot)
+# support_overlay
 
-Implementation of the IRIL spec v1.1.3. A Zendesk sidebar app for support agents resolving refund-related tickets, backed by a Node.js API, Postgres, and a DB-backed outbox worker.
+[![CI](https://img.shields.io/github/actions/workflow/status/ktp-01/support_overlay/ci.yml)](https://github.com/ktp-01/support_overlay/actions)
+[![License](https://img.shields.io/github/license/ktp-01/support_overlay)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/ktp-01/support_overlay)](https://github.com/ktp-01/support_overlay/releases)
 
----
+IRIL: Issue Resolution Integrity Layer.
 
-## Table of contents
+`support_overlay` is a Zendesk sidebar + backend prototype focused on policy-driven issue resolution, approval workflows, and safer third-party side effects through an outbox worker.
 
-- [What this is](#what-this-is)
-- [Prerequisites](#prerequisites)
-- [Publish safely (GitHub)](#publish-safely-github)
-- [Demo mode — first run](#demo-mode--first-run)
-- [Demo mode — normal run](#demo-mode--normal-run)
-- [Demo mode — reset and stop](#demo-mode--reset-and-stop)
-- [Smoke test](#smoke-test)
-- [Dev mode](#dev-mode)
-- [Common errors](#common-errors)
-- [Project structure](#project-structure)
-- [Approval toggle](#approval-toggle)
+## Table Of Contents
 
----
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Demo - First Run](#demo---first-run)
+- [Architecture](#architecture)
+- [Development](#development)
+- [Testing And CI](#testing-and-ci)
+- [Contributing](#contributing)
+- [License](#license)
+- [Contact](#contact)
 
-## What this is
+## Features
 
-- **Resolution Card** — Zendesk sidebar UI for agents resolving refund tickets
-- **Core Integrity Engine** — policy preflight, approval lifecycle, action execution, effects ledger, audit log
-- **Refund Resolution Playbook** — Stripe + Shopify + Zendesk evidence normalization
+- Table-driven policy checks and approval lifecycle support.
+- One-command local startup with recovery logic: `npm run demo:start`.
+- Environment diagnostics: `npm run doctor`.
+- Local smoke checks for demo confidence: `npm run demo:smoke`.
+- Outbox worker model for safer side effects against Zendesk, Stripe, and Shopify.
 
----
-
-## Prerequisites
-
-| Requirement | Version | Check |
-|---|---|---|
-| Node.js | ≥ 18 (22 recommended) | `node --version` |
-| npm | ≥ 9 | `npm --version` |
-| Docker Desktop | any recent | `docker --version` |
-| docker compose | V2 (built into Docker Desktop) | `docker compose version` |
-
-Using nvm: `nvm use` will pick up the `.nvmrc` pin (Node 22).
-
-Run `npm run doctor` to check all requirements before starting.
-
----
-
-## Publish safely (GitHub)
-
-This repo is set up to keep local secrets out of Git:
-
-- `.env` is ignored by `.gitignore`
-- only `.env.example` files are commit-safe templates
-
-Before your first push, verify what would be committed:
+## Quick Start
 
 ```bash
-git add -n .
-```
-
-If `.env` ever appears in staged files, remove it from Git tracking:
-
-```bash
-git rm --cached .env
-```
-
----
-
-## Demo mode — first run
-
-```bash
-# 1. Clone
-git clone <repo> iisl && cd iisl
-
-# 2. Start everything (one command)
+git clone https://github.com/ktp-01/support_overlay.git
+cd support_overlay
+npm ci
 npm run demo:start
 ```
 
-`demo:start` does all of this automatically:
-1. Installs npm dependencies if `node_modules` is missing
-2. Checks for `.env` and creates it from `infra/.env.example` if missing
-3. Validates required env vars and checks credential consistency
-4. Starts Docker (Postgres)
-5. Waits for Postgres health
-6. Runs migrations (idempotent)
-7. Seeds demo data (idempotent — skips if already present)
-8. Starts API (port 3001), Worker, and Sidebar (port 5173)
-9. Prints URLs and credentials
+Open:
 
-If you prefer manual dependency install first, `npm install` still works.
+- UI: `http://localhost:5173`
+- API health: `http://localhost:3001/health`
 
----
+## Demo - First Run
 
-## Demo mode — normal run
+`npm run demo:start` performs:
 
-After first run, subsequent starts are:
+1. Dependency/bootstrap checks.
+2. `.env` validation (or creation from template when needed).
+3. Docker/Postgres startup.
+4. DB migration + idempotent seed.
+5. API, worker, and sidebar startup.
+
+If your local state is inconsistent:
 
 ```bash
-npm run demo:start
-```
-
-That is the only command needed. It is idempotent — safe to run whether or not Postgres is already running or data is already seeded.
-
-To open the sidebar directly:
-```
-http://localhost:5173
-```
-
----
-
-## Demo mode — reset and stop
-
-```bash
-# Full reset: destroys all local Postgres data and reseeds from scratch
-# Prints a 5-second countdown — CTRL+C to abort
 npm run demo:reset
-
-# Stop Docker infrastructure only (keeps data)
-npm run infra:down
-
-# View Docker logs
-npm run infra:logs
 ```
 
-`demo:reset` is **local only** — it only touches your local Docker volume. It does not affect any external database or production system.
+![Architecture diagram for support_overlay showing sidebar, API, Postgres, outbox worker, and third-party connectors](docs/architecture-diagram.png)
 
----
+Alt text: architecture diagram showing Zendesk sidebar -> Fastify API -> Postgres -> outbox worker -> Stripe, Shopify, and Zendesk connectors.
 
-## Smoke test
+## Architecture
 
-Run after `demo:start` to verify everything is working:
+See `ARCHITECTURE.md` for component details, data flows, and diagram source.
 
-```bash
-npm run demo:smoke
-```
+## Development
 
-Checks:
-- API `/health` responds 200
-- API can reach the database
-- Worker heartbeat visible via metrics
-- Sidebar (Vite) responds 200
-- All 3 seeded demo tickets are present and card state is loaded
+- `npm run doctor`: environment and infra preflight checks.
+- `npm run demo:start`: full local demo startup.
+- `npm run demo:reset`: destructive local reset and reseed.
+- `npm run demo:smoke`: runtime smoke verification.
+- `npm run infra:up` / `npm run infra:down`: infra-only controls.
 
----
+Helper scripts in this repo:
 
-## Doctor (pre-flight check)
+- `scripts/doctor.ts`: env/docker diagnostics.
+- `scripts/demo-start.ts`: main local bootstrap flow.
+- `scripts/demo-reset.ts`: local reset flow.
+- `scripts/demo-smoke.ts`: smoke checks against live services.
 
-```bash
-npm run doctor
-```
+## Testing And CI
 
-Checks Node/npm versions, Docker daemon, container health, ports, `.env` presence, `DATABASE_URL` parse, credential consistency between `DATABASE_URL` and `POSTGRES_*` vars. Prints exact fix commands for every failure.
+GitHub Actions workflow: `.github/workflows/ci.yml`
 
-Run this first when anything is broken.
+CI validates:
 
----
+1. Static lint/type checks.
+2. End-to-end local smoke flow (`demo:start` + `demo:smoke`) on Linux runner.
 
-## Dev mode
+## Contributing
 
-For active development (no automated startup sequence):
+See `CONTRIBUTING.md`.
 
-```bash
-# Infra only
-npm run infra:up
+## License
 
-# Migrations + seed
-npm run db:migrate
-npm run db:seed
+MIT. See `LICENSE`.
 
-# All three services (concurrently)
-npm run dev
-```
+## Contact
 
-Individual services:
-```bash
-npm run dev --workspace=apps/api
-npm run dev --workspace=apps/worker
-npm run dev --workspace=apps/sidebar
-```
-
----
-
-## Common errors
-
-| Error | Likely cause | Fix |
-|---|---|---|
-| `Connection refused` on API start | Postgres not running | `npm run infra:up` then wait 5s |
-| `password authentication failed for user "iisl"` | DATABASE_URL and POSTGRES_PASSWORD are out of sync, or volume has old password | Re-run `npm run demo:start` once (auto-recovers local Postgres volume). If it still fails, run `npm run demo:reset`. |
-| `role "iisl" does not exist` | DB was created with different user | Re-run `npm run demo:start` once (auto-recovers local Postgres volume). If it still fails, run `npm run demo:reset`. |
-| `database "iisl" does not exist` | POSTGRES_DB mismatch or volume from old setup | Re-run `npm run demo:start` once (auto-recovers local Postgres volume). If it still fails, run `npm run demo:reset`. |
-| `DATABASE_URL credentials don't match POSTGRES_*` | Edited one without editing the others | Edit `.env` so all four values are consistent: `DATABASE_URL`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
-| `role "iisl" does not exist` even after reset | Shell env overrides `.env`, or localhost resolves to another DB | Use `DATABASE_URL=postgresql://iisl:iisl_dev@127.0.0.1:5432/iisl` in `.env`, then run `unset DATABASE_URL POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB` and `npm run demo:start` |
-| `container name "/iisl_postgres" is already in use` | Legacy container from an older setup | `docker rm -f iisl_postgres iisl_redis` once, then `npm run demo:start` |
-| `Port 5432 already in use` | Local Postgres running outside Docker | Stop local Postgres, or add `POSTGRES_PORT=5433` to `.env` and update `DATABASE_URL` port |
-| `Port 3001 already in use` | Another process on 3001 | Change `API_PORT` in `.env` and update `VITE_API_BASE_URL` |
-| Migrations fail: `relation already exists` | Partial migration from broken run | `npm run demo:reset` |
-| Seed fails: `duplicate key value` | Seed already ran but failed partway | `npm run demo:reset` |
-| Sidebar shows `Unable to load card` | API not running or CORS | Check API terminal for errors; check `VITE_API_BASE_URL` in `.env` |
-| `docker compose: command not found` | Using old `docker-compose` (V1) | Update Docker Desktop — Compose V2 is built in |
-
----
-
-## Project structure
-
-```
-apps/
-  api/          Fastify API server (port 3001)
-  worker/       DB-backed outbox worker (polls every 2s)
-  sidebar/      React sidebar UI — Vite dev server (port 5173)
-packages/
-  shared/       Canonical enums, types, contracts (single source of truth)
-  policy/       Table-driven policy engine
-  connectors/   Zendesk/Stripe/Shopify adapters + fixture simulators
-db/
-  migrations/   SQL migration files (run in filename order)
-  seed.sql      Demo seed data (3 scenarios)
-scripts/
-  demo-start-bootstrap.js  npm run demo:start (installs deps if needed, then starts)
-  demo-start.ts            npm run demo:start:internal
-  demo-reset.ts    npm run demo:reset
-  demo-smoke.ts    npm run demo:smoke
-  doctor.ts        npm run doctor
-  migrate.ts       npm run db:migrate
-  seed.ts          npm run db:seed
-  lib/
-    env-validator.ts  Shared env validation used by all scripts
-infra/
-  docker-compose.yml  Postgres (pinned: postgres:15.6-alpine3.19)
-  .env.example        All vars with comments — copy to .env
-docs/
-  DEMO.md        Step-by-step demo walkthrough for all 4 scenarios
-```
-
----
-
-## Approval toggle
-
-Approvals are **OFF by default** for all pilot tenants.
-
-To enable for the demo tenant:
-```bash
-curl -X PATCH http://localhost:3001/ops/tenants/00000000-0000-0000-0000-000000000001/config \
-  -H "Authorization: Bearer operator-token-dev" \
-  -H "Content-Type: application/json" \
-  -d '{"approvals_enabled": true}'
-```
-
-To disable:
-```bash
-curl -X PATCH http://localhost:3001/ops/tenants/00000000-0000-0000-0000-000000000001/config \
-  -H "Authorization: Bearer operator-token-dev" \
-  -H "Content-Type: application/json" \
-  -d '{"approvals_enabled": false}'
-```
-
-See [docs/DEMO.md](docs/DEMO.md) for the full Scenario 4 walkthrough (manager approval flow).
-
----
-
-## Validation levels
-
-Files in this repo carry explicit validation level annotations in their headers:
-
-- `[Generated]` — written, not yet locally compiled
-- `[Syntax-checked]` — basic syntax verified in this environment
-- `[Compile: pending npm install]` — requires local `npm install` to type-check
-- `[Runtime: pending Docker/Postgres]` — requires local infrastructure to run
-
-Full compile and runtime verification occurs on your machine after `npm install`.
+- Repo: [https://github.com/ktp-01/support_overlay](https://github.com/ktp-01/support_overlay)

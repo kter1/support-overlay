@@ -2,7 +2,7 @@
   "name": "iisl",
   "version": "0.1.0",
   "private": true,
-  "description": "Issue Resolution Integrity Layer — Phase 1 Pilot",
+  "description": "support_overlay — Issue Resolution Integrity Layer (IRIL) prototype",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -21,6 +21,7 @@
     "infra:up":    "docker compose -f infra/docker-compose.yml up -d",
     "infra:down":  "docker compose -f infra/docker-compose.yml down",
     "infra:logs":  "docker compose -f infra/docker-compose.yml logs -f",
+    "lint":        "npm run build:workspace-libs",
     "build":       "npm run build --workspaces --if-present",
     "test":        "vitest run",
     "test:watch":  "vitest",
