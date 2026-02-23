@@ -98,6 +98,3 @@ See `CONTRIBUTING.md`.
 
 MIT. See `LICENSE`.
 
-## Contact
-
-- Repo: [https://github.com/ktp-01/support_overlay](https://github.com/ktp-01/support_overlay)
