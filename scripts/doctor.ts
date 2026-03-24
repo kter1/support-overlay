@@ -153,7 +153,7 @@ function checkEnvFile() {
     fail(
       ".env file",
       ".env not found",
-      "cp infra/.env.example .env"
+      "Create .env in the repo root with required keys, then rerun: npm run doctor"
     );
   }
 }
@@ -170,7 +170,7 @@ function checkEnvVars() {
     fail(
       "Required env vars",
       `${errors.length} missing/invalid var(s):\n    ${errors.join("\n    ")}`,
-      "Edit .env — see infra/.env.example for required values"
+      "Edit .env to include required keys, then rerun: npm run doctor"
     );
   }
 }

@@ -1,8 +1,5 @@
 # support_overlay
 
-[![CI](https://img.shields.io/github/actions/workflow/status/ktp-01/support_overlay/ci.yml)](https://github.com/ktp-01/support_overlay/actions)
-[![License](https://img.shields.io/github/license/ktp-01/support_overlay)](LICENSE)
-
 IRIL: Issue Resolution Integrity Layer.
 
 `support_overlay` is a Zendesk sidebar + backend prototype focused on policy-driven issue resolution, approval workflows, and safer third-party side effects through an outbox worker.
@@ -30,7 +27,7 @@ IRIL: Issue Resolution Integrity Layer.
 ## Quick Start
 
 ```bash
-git clone https://github.com/ktp-01/support_overlay.git
+git clone https://github.com/kter1/support_overlay.git
 cd support_overlay
 npm ci
 npm run demo:start
@@ -46,7 +43,7 @@ Open:
 `npm run demo:start` performs:
 
 1. Dependency/bootstrap checks.
-2. `.env` validation (or creation from template when needed).
+2. `.env` validation (manual `.env` required in repo root).
 3. Docker/Postgres startup.
 4. DB migration + idempotent seed.
 5. API, worker, and sidebar startup.

@@ -73,7 +73,7 @@ async function main() {
   if (errors.length > 0) {
     console.error(`${c.red}✗ .env issues (run npm run doctor for details):${c.reset}`);
     for (const e of errors) console.error(`  • ${e}`);
-    console.error(`\nFix .env first: cp infra/.env.example .env`);
+    console.error(`\nFix .env first: create/update .env in repo root, then run npm run doctor`);
     process.exit(1);
   }
 

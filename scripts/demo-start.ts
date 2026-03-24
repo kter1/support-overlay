@@ -26,7 +26,6 @@ import { validateEnv, parseDatabaseUrl } from "./lib/env-validator";
 const ROOT = path.resolve(__dirname, "..");
 const COMPOSE_FILE = path.join(ROOT, "infra", "docker-compose.yml");
 const ENV_FILE = path.join(ROOT, ".env");
-const ENV_EXAMPLE = path.join(ROOT, "infra", ".env.example");
 
 // ─── ANSI colours ────────────────────────────────────────────────────────────
 const c = {
@@ -57,15 +56,12 @@ function ensureEnvFile() {
   header("Step 1/7 — Checking .env");
 
   if (!fs.existsSync(ENV_FILE)) {
-    warn(".env not found — creating from .env.example");
-    if (!fs.existsSync(ENV_EXAMPLE)) {
-      fail("infra/.env.example is missing", "git checkout infra/.env.example");
-    }
-    fs.copyFileSync(ENV_EXAMPLE, ENV_FILE);
-    ok("Created .env from infra/.env.example");
-  } else {
-    ok(".env found");
+    fail(
+      ".env not found",
+      "Create .env in the repo root with required keys, then run: npm run doctor"
+    );
   }
+  ok(".env found");
 
   // Load into process.env
   const raw = fs.readFileSync(ENV_FILE, "utf-8");
@@ -104,7 +100,7 @@ function validateEnvironment() {
     for (const e of errors) console.error(`  • ${e}`);
     fail(
       "Fix the above .env issues and retry",
-      "Edit .env — see infra/.env.example for reference"
+      "Edit .env and rerun: npm run doctor"
     );
   }
   ok("All required env vars present");
@@ -127,7 +123,7 @@ function validateEnvironment() {
     for (const m of mismatches) console.error(`  • ${m}`);
     fail(
       "DATABASE_URL credentials must match POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB",
-      "Edit .env so all four values are consistent. See infra/.env.example."
+      "Edit .env so all four values are consistent, then rerun: npm run doctor"
     );
   }
   ok("DATABASE_URL credentials consistent with POSTGRES_* vars");
