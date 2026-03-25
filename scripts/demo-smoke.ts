@@ -17,11 +17,6 @@
 
 import * as https from "https";
 import * as http from "http";
-import * as path from "path";
-import { loadEnvFile } from "./lib/env-validator";
-
-const ROOT = path.resolve(__dirname, "..");
-const ENV_FILE = path.join(ROOT, ".env");
 
 const c = {
   reset:  "\x1b[0m",
@@ -32,9 +27,6 @@ const c = {
   cyan:   "\x1b[36m",
   dim:    "\x1b[2m",
 };
-
-// Load env
-loadEnvFile(ENV_FILE);
 
 const API_PORT     = process.env.API_PORT ?? "3001";
 const SIDEBAR_PORT = process.env.SIDEBAR_PORT ?? "5173";

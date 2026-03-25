@@ -4,7 +4,7 @@
  * @description One-command demo startup: `npm run demo:start`
  *
  * Sequence (each step blocks until success or exits with a fix message):
- *   1. Validate .env exists and required vars are present
+ *   1. Validate required process environment vars are present
  *   2. Verify DATABASE_URL credentials match docker-compose defaults
  *   3. Start Docker Compose services
  *   4. Wait for Postgres health (up to 60s)
@@ -19,13 +19,11 @@
  */
 
 import { execSync, spawn } from "child_process";
-import * as fs from "fs";
 import * as path from "path";
 import { validateEnv, parseDatabaseUrl } from "./lib/env-validator";
 
 const ROOT = path.resolve(__dirname, "..");
 const COMPOSE_FILE = path.join(ROOT, "infra", "docker-compose.yml");
-const ENV_FILE = path.join(ROOT, ".env");
 
 // ─── ANSI colours ────────────────────────────────────────────────────────────
 const c = {
@@ -50,31 +48,10 @@ function header(msg: string) {
   console.log(`\n${c.bold}${c.cyan}${msg}${c.reset}`);
 }
 
-// ─── Step 1: Ensure .env exists ───────────────────────────────────────────────
+// ─── Step 1: Prepare process environment ──────────────────────────────────────
 
-function ensureEnvFile() {
-  header("Step 1/7 — Checking .env");
-
-  if (!fs.existsSync(ENV_FILE)) {
-    fail(
-      ".env not found",
-      "Create .env in the repo root with required keys, then run: npm run doctor"
-    );
-  }
-  ok(".env found");
-
-  // Load into process.env
-  const raw = fs.readFileSync(ENV_FILE, "utf-8");
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eqIdx = trimmed.indexOf("=");
-    if (eqIdx === -1) continue;
-    const key = trimmed.slice(0, eqIdx).trim();
-    const val = trimmed.slice(eqIdx + 1).trim();
-    // Force local .env to win for one-command reliability.
-    process.env[key] = val;
-  }
+function prepareEnvironment() {
+  header("Step 1/7 — Preparing process environment");
 
   // Backward compatibility for modules that still read PORT.
   if (!process.env.PORT && process.env.API_PORT) {
@@ -87,6 +64,7 @@ function ensureEnvFile() {
 
   resolvePostgresPortConflicts();
   resolveSidebarPortConflicts();
+  ok("Process environment prepared");
 }
 
 // ─── Step 2: Validate env and credential consistency ─────────────────────────
@@ -96,11 +74,11 @@ function validateEnvironment() {
 
   const errors = validateEnv(process.env);
   if (errors.length > 0) {
-    console.error(`${c.red}✗ .env validation failed:${c.reset}`);
+    console.error(`${c.red}✗ Environment validation failed:${c.reset}`);
     for (const e of errors) console.error(`  • ${e}`);
     fail(
-      "Fix the above .env issues and retry",
-      "Edit .env and rerun: npm run doctor"
+      "Fix the above environment issues and retry",
+      "Export required environment variables, then rerun: npm run doctor"
     );
   }
   ok("All required env vars present");
@@ -123,7 +101,7 @@ function validateEnvironment() {
     for (const m of mismatches) console.error(`  • ${m}`);
     fail(
       "DATABASE_URL credentials must match POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB",
-      "Edit .env so all four values are consistent, then rerun: npm run doctor"
+      "Set DATABASE_URL/POSTGRES_* environment variables so all four values are consistent, then rerun: npm run doctor"
     );
   }
   ok("DATABASE_URL credentials consistent with POSTGRES_* vars");
@@ -235,11 +213,7 @@ function resolvePostgresPortConflicts() {
   url.port = String(selectedPort);
   process.env.DATABASE_URL = url.toString();
   process.env.POSTGRES_PORT = String(selectedPort);
-
-  upsertEnvValue("DATABASE_URL", process.env.DATABASE_URL);
-  upsertEnvValue("POSTGRES_PORT", String(selectedPort));
-
-  ok(`Updated .env with DATABASE_URL port ${selectedPort} and POSTGRES_PORT=${selectedPort}`);
+  ok(`Using DATABASE_URL port ${selectedPort} and POSTGRES_PORT=${selectedPort} for this run`);
 }
 
 function resolveSidebarPortConflicts() {
@@ -264,7 +238,7 @@ function resolveSidebarPortConflicts() {
     fail(
       `Sidebar port ${currentPort} is already in use`,
       [
-        `Free port ${currentPort} or set SIDEBAR_PORT in .env`,
+        `Free port ${currentPort} or set SIDEBAR_PORT in your shell environment`,
         "Then retry: npm run demo:start",
       ].join("\n  ")
     );
@@ -272,8 +246,7 @@ function resolveSidebarPortConflicts() {
 
   warn(`Sidebar port ${currentPort} is busy; switching to ${selectedPort}`);
   process.env.SIDEBAR_PORT = String(selectedPort);
-  upsertEnvValue("SIDEBAR_PORT", String(selectedPort));
-  ok(`Updated .env with SIDEBAR_PORT=${selectedPort}`);
+  ok(`Using SIDEBAR_PORT=${selectedPort} for this run`);
 }
 
 function getPortListeners(port: number): string {
@@ -312,26 +285,6 @@ function hasAnyListener(lsofOutput: string): boolean {
     .map((line) => line.trim())
     .filter(Boolean);
   return lines.length > 1;
-}
-
-function upsertEnvValue(key: string, value: string) {
-  if (!fs.existsSync(ENV_FILE)) return;
-  const lines = fs.readFileSync(ENV_FILE, "utf-8").split("\n");
-  let replaced = false;
-
-  const updated = lines.map((line) => {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) return line;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) return line;
-    const k = trimmed.slice(0, eq).trim();
-    if (k !== key) return line;
-    replaced = true;
-    return `${key}=${value}`;
-  });
-
-  if (!replaced) updated.push(`${key}=${value}`);
-  fs.writeFileSync(ENV_FILE, updated.join("\n"));
 }
 
 // ─── Step 4: Wait for Postgres health ────────────────────────────────────────
@@ -412,7 +365,7 @@ async function runMigrations() {
   fail(
     "Migration failed",
     [
-      "Check DATABASE_URL in .env",
+      "Check DATABASE_URL in your shell environment",
       "Check Postgres is running: docker compose -f infra/docker-compose.yml ps",
       "Hard reset: npm run demo:reset",
     ].join("\n  ")
@@ -565,7 +518,7 @@ function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 
 async function main() {
   console.log(`\n${c.bold}IISL Demo Startup${c.reset} — ${new Date().toLocaleTimeString()}\n`);
-  ensureEnvFile();
+  prepareEnvironment();
   validateEnvironment();
   startDockerServices();
   await waitForPostgres();
