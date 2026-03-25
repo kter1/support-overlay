@@ -8,7 +8,6 @@
  * Start: npm run dev --workspace=apps/worker
  */
 
-import "dotenv/config";
 import { Pool, PoolClient } from "pg";
 
 function normalizeDatabaseUrl(raw?: string): string | undefined {

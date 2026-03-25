@@ -9,7 +9,6 @@
  *   npm run db:migrate --reset  # Drop all tables and re-run (DESTRUCTIVE)
  */
 
-import "dotenv/config";
 import { Pool } from "pg";
 import * as fs from "fs";
 import * as path from "path";

@@ -8,27 +8,24 @@
  *   2. npm version >= 9
  *   3. Docker available and daemon running
  *   4. docker compose available
- *   5. .env file exists
- *   6. Required env vars present
- *   7. DATABASE_URL parseable
- *   8. DATABASE_URL credentials match POSTGRES_* vars
- *   9. Docker containers running and healthy
- *  10. Postgres port (5432) not conflicted by an external process
- *  11. API port (3001) free or listening to iisl
- *  12. Sidebar port (5173) free or listening to iisl
+ *   5. Required env vars present
+ *   6. DATABASE_URL parseable
+ *   7. DATABASE_URL credentials match POSTGRES_* vars
+ *   8. Docker containers running and healthy
+ *   9. Postgres port (5432) not conflicted by an external process
+ *  10. API port (3001) free or listening to iisl
+ *  11. Sidebar port (5173) free or listening to iisl
  *
  * Each failure prints an exact fix command — no guessing required.
  * Exits 0 only if all checks pass.
  */
 
 import { execSync } from "child_process";
-import * as fs from "fs";
 import * as path from "path";
-import { validateEnv, parseDatabaseUrl, loadEnvFile } from "./lib/env-validator";
+import { validateEnv, parseDatabaseUrl } from "./lib/env-validator";
 
 const ROOT = path.resolve(__dirname, "..");
 const COMPOSE_FILE = path.join(ROOT, "infra", "docker-compose.yml");
-const ENV_FILE = path.join(ROOT, ".env");
 
 // ─── Result tracking ──────────────────────────────────────────────────────────
 
@@ -144,24 +141,9 @@ function checkDockerCompose() {
   }
 }
 
-// ─── Check 6: .env file ───────────────────────────────────────────────────────
-
-function checkEnvFile() {
-  if (fs.existsSync(ENV_FILE)) {
-    pass(".env file", `found at ${ENV_FILE}`);
-  } else {
-    fail(
-      ".env file",
-      ".env not found",
-      "Create .env in the repo root with required keys, then rerun: npm run doctor"
-    );
-  }
-}
-
-// ─── Check 7: Required env vars ───────────────────────────────────────────────
+// ─── Check 5: Required env vars ───────────────────────────────────────────────
 
 function checkEnvVars() {
-  loadEnvFile(ENV_FILE);
   const errors = validateEnv(process.env as Record<string, string | undefined>);
 
   if (errors.length === 0) {
@@ -170,12 +152,12 @@ function checkEnvVars() {
     fail(
       "Required env vars",
       `${errors.length} missing/invalid var(s):\n    ${errors.join("\n    ")}`,
-      "Edit .env to include required keys, then rerun: npm run doctor"
+      "Export required environment variables, then rerun: npm run doctor"
     );
   }
 }
 
-// ─── Check 8: DATABASE_URL credential consistency ─────────────────────────────
+// ─── Check 6: DATABASE_URL credential consistency ─────────────────────────────
 
 function checkCredentialConsistency() {
   const dbUrl = process.env.DATABASE_URL;
@@ -209,7 +191,7 @@ function checkCredentialConsistency() {
         "Credential consistency",
         `Mismatch between DATABASE_URL and POSTGRES_* vars:\n    ${mismatches.join("\n    ")}`,
         [
-          "Edit .env so all four values are consistent. Example:",
+          "Set environment variables so all four values are consistent. Example:",
           "  DATABASE_URL=postgresql://iisl:iisl_dev@127.0.0.1:5432/iisl",
           "  POSTGRES_USER=iisl",
           "  POSTGRES_PASSWORD=iisl_dev",
@@ -225,7 +207,7 @@ function checkCredentialConsistency() {
     fail(
       "Credential consistency",
       `Cannot parse DATABASE_URL: ${e instanceof Error ? e.message : e}`,
-      "Fix DATABASE_URL in .env — format: postgresql://user:password@host:port/database"
+      "Fix DATABASE_URL in your environment — format: postgresql://user:password@host:port/database"
     );
   }
 }
@@ -327,7 +309,7 @@ function checkPort(port: number, serviceName: string, envVarName?: string) {
             [
               `See what's using it: lsof -i :${port}`,
               `Kill it:             kill $(lsof -t -i :${port})`,
-              `Or change ${envVarName ?? `${serviceName.toUpperCase()}_PORT`} in .env and restart`,
+              `Or set ${envVarName ?? `${serviceName.toUpperCase()}_PORT`} in your shell environment and restart`,
             ].join("\n    ")
           );
         }
@@ -417,7 +399,6 @@ function main() {
   checkDockerCli();
   checkDockerDaemon();
   checkDockerCompose();
-  checkEnvFile();
   checkEnvVars();
   checkCredentialConsistency();
   checkContainerHealth();

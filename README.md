@@ -30,6 +30,20 @@ IRIL: Issue Resolution Integrity Layer.
 git clone https://github.com/kter1/support_overlay.git
 cd support_overlay
 npm ci
+export DATABASE_URL=postgresql://iisl:iisl_dev@127.0.0.1:5432/iisl
+export POSTGRES_USER=iisl
+export POSTGRES_PASSWORD=iisl_dev
+export POSTGRES_DB=iisl
+export API_PORT=3001
+export API_HOST=0.0.0.0
+export OPERATOR_TOKEN=operator-token-dev
+export AGENT_TOKEN=agent-token-dev
+export WORKER_POLL_INTERVAL_MS=2000
+export WORKER_MAX_ATTEMPTS=5
+export USE_ZENDESK_SIMULATOR=true
+export USE_STRIPE_SIMULATOR=true
+export USE_SHOPIFY_SIMULATOR=true
+export VITE_API_BASE_URL=http://localhost:3001
 npm run demo:start
 ```
 
@@ -43,7 +57,7 @@ Open:
 `npm run demo:start` performs:
 
 1. Dependency/bootstrap checks.
-2. `.env` validation (manual `.env` required in repo root).
+2. Process environment validation (required vars must be set in shell).
 3. Docker/Postgres startup.
 4. DB migration + idempotent seed.
 5. API, worker, and sidebar startup.

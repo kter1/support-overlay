@@ -122,26 +122,3 @@ export function parseDatabaseUrl(raw: string): ParsedDbUrl {
 
   return { user, password, host, port, database };
 }
-
-/**
- * Load .env file into process.env (overrides existing shell env).
- * Returns true if .env was found and loaded.
- */
-export function loadEnvFile(envPath: string): boolean {
-  const fs = require("fs") as typeof import("fs");
-
-  if (!fs.existsSync(envPath)) return false;
-
-  const raw = fs.readFileSync(envPath, "utf-8");
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eqIdx = trimmed.indexOf("=");
-    if (eqIdx === -1) continue;
-    const key = trimmed.slice(0, eqIdx).trim();
-    const val = trimmed.slice(eqIdx + 1).trim();
-    process.env[key] = val;
-  }
-
-  return true;
-}

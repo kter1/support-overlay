@@ -5,7 +5,6 @@
  * Starts the IISL API server with all routes registered.
  * Run: npm run dev (from apps/api)
  */
-import "dotenv/config";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";

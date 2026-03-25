@@ -18,13 +18,11 @@
  */
 
 import { execSync } from "child_process";
-import * as fs from "fs";
 import * as path from "path";
-import { loadEnvFile, validateEnv } from "./lib/env-validator";
+import { validateEnv } from "./lib/env-validator";
 
 const ROOT = path.resolve(__dirname, "..");
 const COMPOSE_FILE = path.join(ROOT, "infra", "docker-compose.yml");
-const ENV_FILE = path.join(ROOT, ".env");
 
 const c = {
   reset:  "\x1b[0m",
@@ -66,14 +64,13 @@ async function main() {
 
   await countdown(5);
 
-  // ── Step 1: Load env ─────────────────────────────────────────────────────
-  loadEnvFile(ENV_FILE);
+  // ── Step 1: Validate environment ─────────────────────────────────────────
   resolvePostgresPortConflicts();
   const errors = validateEnv(process.env as Record<string, string | undefined>);
   if (errors.length > 0) {
-    console.error(`${c.red}✗ .env issues (run npm run doctor for details):${c.reset}`);
+    console.error(`${c.red}✗ Environment issues (run npm run doctor for details):${c.reset}`);
     for (const e of errors) console.error(`  • ${e}`);
-    console.error(`\nFix .env first: create/update .env in repo root, then run npm run doctor`);
+    console.error(`\nFix environment variables first, then run npm run doctor`);
     process.exit(1);
   }
 
@@ -140,7 +137,7 @@ async function main() {
     ok("Migrations complete");
   } catch {
     console.error(`\n${c.red}✗ Migration failed${c.reset}`);
-    console.error("  Check DATABASE_URL in .env and Postgres logs");
+    console.error("  Check DATABASE_URL in your shell environment and Postgres logs");
     process.exit(1);
   }
 
@@ -209,9 +206,6 @@ function resolvePostgresPortConflicts() {
   url.port = String(selectedPort);
   process.env.DATABASE_URL = url.toString();
   process.env.POSTGRES_PORT = String(selectedPort);
-
-  upsertEnvValue("DATABASE_URL", process.env.DATABASE_URL);
-  upsertEnvValue("POSTGRES_PORT", String(selectedPort));
 }
 
 function getPortListeners(port: number): string {
@@ -241,26 +235,6 @@ function hasNonDockerListener(lsofOutput: string): boolean {
     }
   }
   return false;
-}
-
-function upsertEnvValue(key: string, value: string) {
-  if (!fs.existsSync(ENV_FILE)) return;
-  const lines = fs.readFileSync(ENV_FILE, "utf-8").split("\n");
-  let replaced = false;
-
-  const updated = lines.map((line) => {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) return line;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) return line;
-    const k = trimmed.slice(0, eq).trim();
-    if (k !== key) return line;
-    replaced = true;
-    return `${key}=${value}`;
-  });
-
-  if (!replaced) updated.push(`${key}=${value}`);
-  fs.writeFileSync(ENV_FILE, updated.join("\n"));
 }
 
 main().catch((err) => {

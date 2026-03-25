@@ -47,7 +47,7 @@ graph LR
 
 - The outbox pattern is used for safer side effects and retry handling.
 - Stripe actions should use idempotency keys whenever applicable.
-- Secrets must remain in environment variables (`.env`) and never be committed.
+- Secrets must remain in runtime environment variables and never be committed.
 
 ## Artifacts
 
