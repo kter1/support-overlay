@@ -24,12 +24,12 @@ This document describes the high-level architecture for `support_overlay` (IRIL:
 ```mermaid
 graph LR
   subgraph UI
-    ZS[Zendesk Sidebar\n(React)]
+    ZS["Zendesk Sidebar (React)"]
   end
 
   subgraph Backend
-    API[Fastify API\n(:3001)]
-    Worker[Outbox Worker\n(DB polling)]
+    API["Fastify API (:3001)"]
+    Worker["Outbox Worker (DB polling)"]
   end
 
   DB[(Postgres :5432)]
