@@ -27,6 +27,12 @@ Services:
 - API: http://localhost:3001
 - Sidebar: http://localhost:5173
 
+Before running operator API commands in this guide:
+
+```bash
+export OPERATOR_TOKEN=<operator_token>
+```
+
 ---
 
 ## Scenario 1: Happy Path — Refund Confirmed
@@ -49,7 +55,7 @@ Services:
 6. Verify audit trail:
    ```bash
    curl http://localhost:3001/ops/audit/10000000-0000-0000-0000-000000000001 \
-     -H "Authorization: Bearer operator-token-dev"
+     -H "Authorization: Bearer $OPERATOR_TOKEN"
    ```
 
 **Expected behavior:** End-to-end in <5 seconds. Zero extra interactions.
@@ -101,12 +107,12 @@ For the scenario where worker reaches FAILED_TERMINAL (simulate by stopping the 
 ```bash
 # Get the execution ID
 curl http://localhost:3001/ops/action-executions \
-  -H "Authorization: Bearer operator-token-dev" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
   -H "x-tenant-id: 00000000-0000-0000-0000-000000000001"
 
 # Reconcile with CONFIRMED_OCCURRED (effect did happen)
 curl -X PATCH http://localhost:3001/ops/action-executions/<execution-id>/reconcile \
-  -H "Authorization: Bearer operator-token-dev" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "external_side_effect_status": "CONFIRMED_OCCURRED",
@@ -130,7 +136,7 @@ curl -X PATCH http://localhost:3001/ops/action-executions/<execution-id>/reconci
 
 ```bash
 curl -X PATCH http://localhost:3001/ops/tenants/00000000-0000-0000-0000-000000000001/config \
-  -H "Authorization: Bearer operator-token-dev" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"approvals_enabled": true}'
 ```
@@ -146,12 +152,12 @@ curl -X PATCH http://localhost:3001/ops/tenants/00000000-0000-0000-0000-00000000
    # List pending approvals
    curl http://localhost:3001/approvals \
      -H "x-tenant-id: 00000000-0000-0000-0000-000000000001" \
-     -H "Authorization: Bearer operator-token-dev"
+     -H "Authorization: Bearer $OPERATOR_TOKEN"
 
    # Approve (as manager)
    curl -X POST http://localhost:3001/approvals/<approval-id>/approve \
      -H "x-tenant-id: 00000000-0000-0000-0000-000000000001" \
-     -H "Authorization: Bearer operator-token-dev" \
+     -H "Authorization: Bearer $OPERATOR_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{"manager_id": "manager-demo-001", "notes": "Approved — verified customer account"}'
    ```
@@ -162,7 +168,7 @@ curl -X PATCH http://localhost:3001/ops/tenants/00000000-0000-0000-0000-00000000
 
 ```bash
 curl -X PATCH http://localhost:3001/ops/tenants/00000000-0000-0000-0000-000000000001/config \
-  -H "Authorization: Bearer operator-token-dev" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"approvals_enabled": false}'
 ```
@@ -171,12 +177,12 @@ curl -X PATCH http://localhost:3001/ops/tenants/00000000-0000-0000-0000-00000000
 
 ## Operator Repair Commands
 
-All require: `-H "Authorization: Bearer operator-token-dev"`
+All require: `-H "Authorization: Bearer $OPERATOR_TOKEN"`
 
 ### Rebuild issue card state
 ```bash
 curl -X POST http://localhost:3001/ops/issues/<issue-id>/rebuild-card-state \
-  -H "Authorization: Bearer operator-token-dev" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"reason": "Card state appeared stale after deployment"}'
 ```
@@ -184,7 +190,7 @@ curl -X POST http://localhost:3001/ops/issues/<issue-id>/rebuild-card-state \
 ### Replay inbound event
 ```bash
 curl -X POST http://localhost:3001/ops/inbound-events/<event-id>/replay \
-  -H "Authorization: Bearer operator-token-dev" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"reason": "Event processing failed due to transient DB error"}'
 ```
@@ -192,7 +198,7 @@ curl -X POST http://localhost:3001/ops/inbound-events/<event-id>/replay \
 ### Force sync Zendesk status
 ```bash
 curl -X POST http://localhost:3001/ops/issues/<issue-id>/sync-zendesk \
-  -H "Authorization: Bearer operator-token-dev" \
+  -H "Authorization: Bearer $OPERATOR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"reason": "Zendesk showed wrong status after failed outbox", "target_status": "solved"}'
 ```
