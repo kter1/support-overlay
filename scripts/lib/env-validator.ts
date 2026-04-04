@@ -18,16 +18,16 @@ export interface EnvVarSpec {
 
 export const ENV_SPECS: EnvVarSpec[] = [
   // Database — required
-  { key: "DATABASE_URL",    description: "Full Postgres connection string", example: "postgresql://iisl:iisl_dev@127.0.0.1:5432/iisl", required: true },
+  { key: "DATABASE_URL",    description: "Full Postgres connection string", example: "postgresql://iisl:<postgres_password>@127.0.0.1:5432/iisl", required: true },
   { key: "POSTGRES_USER",   description: "Postgres username (must match DATABASE_URL)", example: "iisl", required: true },
-  { key: "POSTGRES_PASSWORD", description: "Postgres password (must match DATABASE_URL)", example: "iisl_dev", required: true },
+  { key: "POSTGRES_PASSWORD", description: "Postgres password (must match DATABASE_URL)", example: "<postgres_password>", required: true },
   { key: "POSTGRES_DB",     description: "Postgres database name (must match DATABASE_URL)", example: "iisl", required: true },
   // API
   { key: "API_PORT",        description: "API server port", example: "3001", required: true },
-  { key: "API_HOST",        description: "API server bind host", example: "0.0.0.0", required: true },
+  { key: "API_HOST",        description: "API server bind host", example: "127.0.0.1", required: false },
   // Auth
-  { key: "OPERATOR_TOKEN",  description: "Bearer token for operator endpoints", example: "operator-token-dev", required: true },
-  { key: "AGENT_TOKEN",     description: "Bearer token for agent endpoints", example: "agent-token-dev", required: true },
+  { key: "OPERATOR_TOKEN",  description: "Bearer token for operator endpoints", example: "<operator_token>", required: true },
+  { key: "AGENT_TOKEN",     description: "Bearer token for agent endpoints", example: "<agent_token>", required: true },
   // Worker
   { key: "WORKER_POLL_INTERVAL_MS", description: "Outbox poll interval in ms", example: "2000", required: true },
   { key: "WORKER_MAX_ATTEMPTS",     description: "Max outbox retry attempts", example: "5", required: true },

@@ -165,9 +165,9 @@ function checkCredentialConsistency() {
 
   try {
     const parsed = parseDatabaseUrl(dbUrl);
-    const pgUser = process.env.POSTGRES_USER ?? "iisl";
-    const pgPass = process.env.POSTGRES_PASSWORD ?? "iisl_dev";
-    const pgDb   = process.env.POSTGRES_DB ?? "iisl";
+    const pgUser = process.env.POSTGRES_USER!;
+    const pgPass = process.env.POSTGRES_PASSWORD!;
+    const pgDb   = process.env.POSTGRES_DB!;
     const pgPort = parseInt(process.env.POSTGRES_PORT ?? "5432", 10);
 
     const mismatches: string[] = [];
@@ -192,9 +192,9 @@ function checkCredentialConsistency() {
         `Mismatch between DATABASE_URL and POSTGRES_* vars:\n    ${mismatches.join("\n    ")}`,
         [
           "Set environment variables so all four values are consistent. Example:",
-          "  DATABASE_URL=postgresql://iisl:iisl_dev@127.0.0.1:5432/iisl",
+          "  DATABASE_URL=postgresql://iisl:<postgres_password>@127.0.0.1:5432/iisl",
           "  POSTGRES_USER=iisl",
-          "  POSTGRES_PASSWORD=iisl_dev",
+          "  POSTGRES_PASSWORD=<postgres_password>",
           "  POSTGRES_DB=iisl",
           "  POSTGRES_PORT=5432",
           "",

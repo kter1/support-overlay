@@ -30,7 +30,13 @@ const c = {
 
 const API_PORT     = process.env.API_PORT ?? "3001";
 const SIDEBAR_PORT = process.env.SIDEBAR_PORT ?? "5173";
-const OP_TOKEN     = process.env.OPERATOR_TOKEN ?? "operator-token-dev";
+const opTokenRaw   = process.env.OPERATOR_TOKEN;
+if (!opTokenRaw || opTokenRaw.trim() === "") {
+  console.error(`${c.red}✗ OPERATOR_TOKEN is required for smoke checks${c.reset}`);
+  console.error(`${c.yellow}Fix:${c.reset} export OPERATOR_TOKEN=<operator_token>`);
+  process.exit(1);
+}
+const OP_TOKEN     = opTokenRaw;
 const TENANT_ID    = "00000000-0000-0000-0000-000000000001";
 const DEMO_TICKETS = ["10001", "10002", "10003"];
 

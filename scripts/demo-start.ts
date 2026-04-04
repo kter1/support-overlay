@@ -85,9 +85,9 @@ function validateEnvironment() {
 
   // Verify DATABASE_URL credentials match POSTGRES_* vars (most common mismatch)
   const dbUrl = parseDatabaseUrl(process.env.DATABASE_URL!);
-  const pgUser = process.env.POSTGRES_USER ?? "iisl";
-  const pgPass = process.env.POSTGRES_PASSWORD ?? "iisl_dev";
-  const pgDb   = process.env.POSTGRES_DB ?? "iisl";
+  const pgUser = process.env.POSTGRES_USER!;
+  const pgPass = process.env.POSTGRES_PASSWORD!;
+  const pgDb   = process.env.POSTGRES_DB!;
   const pgPort = parseInt(process.env.POSTGRES_PORT ?? "5432", 10);
 
   const mismatches: string[] = [];
@@ -475,7 +475,7 @@ function startServices() {
 function printDemoInfo() {
   const apiPort     = process.env.API_PORT ?? "3001";
   const sidebarPort = process.env.SIDEBAR_PORT ?? "5173";
-  const opToken     = process.env.OPERATOR_TOKEN ?? "operator-token-dev";
+  const opToken     = process.env.OPERATOR_TOKEN!;
 
   console.log(`
 ${c.bold}${c.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${c.reset}

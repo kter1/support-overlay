@@ -35,15 +35,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      DATABASE_URL: postgresql://iisl:iisl_dev@127.0.0.1:5432/iisl
+      DATABASE_URL: postgresql://iisl:ci_pg_${{ github.run_id }}_${{ github.run_attempt }}@127.0.0.1:5432/iisl
       POSTGRES_USER: iisl
-      POSTGRES_PASSWORD: iisl_dev
+      POSTGRES_PASSWORD: ci_pg_${{ github.run_id }}_${{ github.run_attempt }}
       POSTGRES_DB: iisl
       POSTGRES_PORT: "5432"
       API_PORT: "3001"
-      API_HOST: 0.0.0.0
-      OPERATOR_TOKEN: operator-token-dev
-      AGENT_TOKEN: agent-token-dev
+      API_HOST: 127.0.0.1
+      OPERATOR_TOKEN: ci_operator_${{ github.run_id }}_${{ github.run_attempt }}
+      AGENT_TOKEN: ci_agent_${{ github.run_id }}_${{ github.run_attempt }}
       WORKER_POLL_INTERVAL_MS: "2000"
       WORKER_MAX_ATTEMPTS: "5"
       USE_ZENDESK_SIMULATOR: "true"
@@ -69,6 +69,22 @@ jobs:
         run: |
           if [ -f .env ]; then
             echo ".env file detected in repository workspace"
+            exit 1
+          fi
+
+      - name: Enforce public-safe defaults policy
+        run: |
+          legacy_operator="operator-token"
+          legacy_operator="${legacy_operator}-dev"
+          legacy_agent="agent-token"
+          legacy_agent="${legacy_agent}-dev"
+          legacy_pg="iisl"
+          legacy_pg="${legacy_pg}_dev"
+          open_bind="0.0.0."
+          open_bind="${open_bind}0"
+          banned_pattern="${legacy_operator}|${legacy_agent}|${legacy_pg}|API_HOST=${open_bind}|process\\.env\\.API_HOST \\?\\? \\\"${open_bind}\\\"|POSTGRES_PASSWORD:-${legacy_pg}"
+          if rg --hidden --glob '!.git' -n -e "$banned_pattern" .; then
+            echo "Banned public-default literals detected."
             exit 1
           fi
 
