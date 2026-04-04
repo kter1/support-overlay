@@ -30,14 +30,13 @@ IRIL: Issue Resolution Integrity Layer.
 git clone https://github.com/kter1/support_overlay.git
 cd support_overlay
 npm ci
-export POSTGRES_PASSWORD="$(node -e "console.log(require('crypto').randomBytes(18).toString('hex'))")"
-export OPERATOR_TOKEN="$(node -e "console.log(require('crypto').randomBytes(24).toString('hex'))")"
-export AGENT_TOKEN="$(node -e "console.log(require('crypto').randomBytes(24).toString('hex'))")"
+export POSTGRES_PASSWORD=<postgres_password>
+export OPERATOR_TOKEN=<operator_token>
+export AGENT_TOKEN=<agent_token>
 export DATABASE_URL="postgresql://iisl:${POSTGRES_PASSWORD}@127.0.0.1:5432/iisl"
 export POSTGRES_USER=iisl
 export POSTGRES_DB=iisl
 export API_PORT=3001
-export API_HOST=127.0.0.1
 export WORKER_POLL_INTERVAL_MS=2000
 export WORKER_MAX_ATTEMPTS=5
 export USE_ZENDESK_SIMULATOR=true
@@ -46,6 +45,16 @@ export USE_SHOPIFY_SIMULATOR=true
 export VITE_API_BASE_URL=http://localhost:3001
 npm run demo:start
 ```
+
+Optional: generate local random values (macOS/Linux):
+
+```bash
+export POSTGRES_PASSWORD="$(openssl rand -hex 18)"
+export OPERATOR_TOKEN="$(openssl rand -hex 24)"
+export AGENT_TOKEN="$(openssl rand -hex 24)"
+```
+
+These values are local demo credentials/tokens for this shell session only.
 
 Local demo note: this setup is intended for an isolated local environment only.
 
