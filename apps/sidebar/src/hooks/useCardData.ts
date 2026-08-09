@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { API_BASE, authHeaders } from "../config";
+import { apiRequest } from "../zaf";
 
 interface CardData {
   issueId: string;
@@ -321,28 +321,23 @@ export function useCardData(zendeskTicketId: string) {
   const [error, setError] = useState<string | null>(null);
 
   const refetch = useCallback(async () => {
-    try {
-      const response = await fetch(
-        `${API_BASE}/api/v1/card/${zendeskTicketId}`,
-        { headers: authHeaders() }
+    const response = await apiRequest<ApiCardResponse>(
+      `/api/v1/card/${zendeskTicketId}`
+    );
+
+    if (!response.ok || !response.body) {
+      setError(
+        response.status === 404
+          ? "No resolution record exists for this ticket yet."
+          : response.error ?? "Could not load the resolution card."
       );
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          setError(`Ticket ${zendeskTicketId} not found`);
-          return;
-        }
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const data = await response.json() as ApiCardResponse;
-      setCard(normalizeCardResponse(data));
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load card data");
-    } finally {
       setLoading(false);
+      return;
     }
+
+    setCard(normalizeCardResponse(response.body));
+    setError(null);
+    setLoading(false);
   }, [zendeskTicketId]);
 
   // Fetch on mount and when ticket changes

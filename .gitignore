@@ -36,3 +36,7 @@ pnpm-debug.log*
 .DS_Store
 .idea/
 .vscode/
+
+# Zendesk app build output
+dist/
+.tmp-concurrency.json

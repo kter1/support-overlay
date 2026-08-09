@@ -10,14 +10,34 @@ permissions:
   contents: read
 
 jobs:
-  # Static checks plus the unit/integration suite. The tests run an in-process
-  # Postgres (PGlite) against the real migrations, so no service container is
-  # needed and schema/code drift fails here rather than in the demo.
+  # Static checks plus the full suite.
+  #
+  # A real Postgres service runs here so the multi-worker concurrency tests
+  # execute rather than skip: PGlite is a single connection and cannot exercise
+  # FOR UPDATE SKIP LOCKED at all, and "exactly once under contention" is the
+  # product claim. Without TEST_DATABASE_URL the suite falls back to PGlite and
+  # those tests are reported as skipped.
   check:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         node-version: [18.x, 22.x]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: overlay_test
+          POSTGRES_PASSWORD: overlay_test
+          POSTGRES_DB: postgres
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://overlay_test:overlay_test@127.0.0.1:5433/postgres
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,8 +57,29 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Validate Zendesk app manifest
+        run: npm run app:validate
+
       - name: Test
         run: npm test
+
+      - name: Assert concurrency suite actually ran
+        run: |
+          # A silent skip here would hide the one property that cannot be
+          # verified any other way.
+          npx vitest run apps/api/test/concurrency.test.ts --reporter=json \
+            > .tmp-concurrency.json
+          node -e "
+            const r = require('./.tmp-concurrency.json');
+            if (r.numTotalTests === 0 || r.numPassedTests === 0) {
+              console.error('Concurrency tests did not execute against a real Postgres');
+              process.exit(1);
+            }
+            console.log(\`Concurrency tests passed: \${r.numPassedTests}\`);
+          "
+
+      - name: Build Zendesk app package
+        run: npm run app:package
 
   policy:
     runs-on: ubuntu-latest

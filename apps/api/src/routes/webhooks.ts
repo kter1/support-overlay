@@ -24,6 +24,7 @@ import { createHmac, timingSafeEqual, createHash } from "crypto";
 import { query, withTransaction } from "../db/pool";
 import { writeAuditEventTx, AuditEventType } from "../services/audit";
 import { requireAuth } from "../middleware/auth";
+import { recomputeMatchForIssue } from "../services/matching";
 import { ActorType } from "@iisl/shared";
 
 /** Stripe's recommended tolerance for replayed timestamps. */
@@ -519,33 +520,138 @@ async function handleTicketMerged(
   }
 }
 
+/**
+ * Project a Shopify order event onto the evidence row for that order.
+ *
+ * The order side is half of what the matcher compares — without a total and a
+ * financial status there is nothing to check a refund against, so the band can
+ * never rise above what payment evidence alone supports.
+ */
 async function routeShopifyEvent(
   client: PoolClient,
   tenantId: string,
   eventType: string | undefined,
   payload: Record<string, unknown>
 ): Promise<void> {
-  // Shopify order archival tombstone handling
-  if (
-    eventType === "orders/updated" &&
-    payload.status === "archived"
-  ) {
-    const orderId = String(payload.id ?? "");
-    await client.query(
+  const orderId = String(payload.id ?? "");
+  if (!orderId) return;
+
+  // Archived orders tombstone rather than disappear: the case record is
+  // preserved and the card shows the last known state.
+  if (eventType === "orders/updated" && payload.status === "archived") {
+    const archived = await client.query<{ issue_id: string }>(
       `UPDATE evidence_normalized
-       SET is_source_unavailable = true, updated_at = now()
-       WHERE tenant_id = $1
-         AND source_system = 'shopify'
-         AND refund_id LIKE $2`,
-      [tenantId, `%${orderId}%`]
+          SET is_source_unavailable = true,
+              source_unavailable_reason = 'Shopify order archived — last known state shown.',
+              updated_at = now()
+        WHERE tenant_id = $1
+          AND source_system = 'shopify'
+          AND (order_id = $2 OR source_record_id = $2)
+        RETURNING issue_id`,
+      [tenantId, orderId]
     );
+
     await writeAuditEventTx(client, {
       tenantId,
+      issueId: archived.rows[0]?.issue_id,
       eventType: AuditEventType.ORDER_ARCHIVED,
       actorType: ActorType.WEBHOOK,
-      payload: { shopify_order_id: orderId },
+      payload: { shopify_order_id: orderId, rows_updated: archived.rows.length },
+    });
+
+    await recomputeAffected(client, tenantId, archived.rows);
+    return;
+  }
+
+  if (eventType !== "orders/updated" && eventType !== "orders/paid") return;
+
+  // Shopify sends money as a decimal string; the rest of the system is cents.
+  const totalCents = toCents(payload.total_price);
+  const financialStatus = stringValue(payload.financial_status);
+
+  const updated = await client.query<{ issue_id: string }>(
+    `UPDATE evidence_normalized
+        SET normalized_data = normalized_data
+              || jsonb_build_object(
+                   'shopifyOrderId', $2::text,
+                   'shopifyOrderName', $3::text,
+                   'shopifyOrderTotal', $4::int,
+                   'shopifyOrderCurrency', $5::text,
+                   'shopifyFinancialStatus', $6::text,
+                   'shopifyFulfillmentStatus', $7::text
+                 ),
+            order_id = COALESCE(order_id, $2),
+            refund_currency = COALESCE($5, refund_currency),
+            fetched_at = now(),
+            updated_at = now()
+      WHERE tenant_id = $1
+        AND source_system = 'shopify'
+        AND (order_id = $2 OR source_record_id = $2)
+      RETURNING issue_id`,
+    [
+      tenantId,
+      orderId,
+      stringValue(payload.name),
+      totalCents,
+      stringValue(payload.currency),
+      financialStatus,
+      stringValue(payload.fulfillment_status),
+    ]
+  );
+
+  await writeAuditEventTx(client, {
+    tenantId,
+    issueId: updated.rows[0]?.issue_id,
+    eventType: AuditEventType.EVIDENCE_FETCHED,
+    actorType: ActorType.WEBHOOK,
+    payload: {
+      shopify_event_type: eventType,
+      shopify_order_id: orderId,
+      financial_status: financialStatus,
+      evidence_rows_updated: updated.rows.length,
+    },
+  });
+
+  await recomputeAffected(client, tenantId, updated.rows);
+}
+
+/** Recompute the match band for every issue whose evidence just changed. */
+async function recomputeAffected(
+  client: PoolClient,
+  tenantId: string,
+  rows: Array<{ issue_id: string }>
+): Promise<void> {
+  const seen = new Set<string>();
+
+  for (const row of rows) {
+    if (!row.issue_id || seen.has(row.issue_id)) continue;
+    seen.add(row.issue_id);
+
+    const match = await recomputeMatchForIssue(tenantId, row.issue_id, client);
+    if (!match) continue;
+
+    await writeAuditEventTx(client, {
+      tenantId,
+      issueId: row.issue_id,
+      eventType: AuditEventType.EVIDENCE_MATCH_COMPUTED,
+      actorType: ActorType.SYSTEM,
+      payload: {
+        match_band: match.band,
+        confidence_score: match.confidenceScore,
+        matched_fields: match.matchedFields,
+      },
     });
   }
+}
+
+/** Shopify money is a decimal string ("49.99"); everything else uses cents. */
+function toCents(value: unknown): number | null {
+  const amount = typeof value === "string" ? Number.parseFloat(value) : NaN;
+  return Number.isFinite(amount) ? Math.round(amount * 100) : null;
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value : null;
 }
 
 /**
@@ -611,6 +717,9 @@ async function routeStripeEvent(
       evidence_rows_updated: updated.rows.length,
     },
   });
+
+  // Evidence changed, so the confidence band is stale until recomputed.
+  await recomputeAffected(client, tenantId, updated.rows);
 }
 
 // ─── Signature verification ───────────────────────────────────────────────────

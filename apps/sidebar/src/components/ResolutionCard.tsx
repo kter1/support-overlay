@@ -22,12 +22,23 @@ import { useCardData } from "../hooks/useCardData";
 interface ResolutionCardProps {
   zendeskTicketId: string;
   agentId: string;
+  /** Called when content height may have changed, so the host can resize. */
+  onLayoutChange?: () => void;
 }
 
-export default function ResolutionCard({ zendeskTicketId, agentId }: ResolutionCardProps) {
+export default function ResolutionCard({
+  zendeskTicketId,
+  agentId,
+  onLayoutChange,
+}: ResolutionCardProps) {
   const { card, loading, error, refetch } = useCardData(zendeskTicketId);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [lastActionResult, setLastActionResult] = useState<string | null>(null);
+
+  // Anything that changes the rendered height should let the host resize.
+  useEffect(() => {
+    onLayoutChange?.();
+  }, [card, loading, error, detailsOpen, lastActionResult, onLayoutChange]);
 
   // Poll for status updates (spec §9: polling acceptable for Phase 1)
   useEffect(() => {

@@ -22,6 +22,8 @@ import { query, withTransaction } from "../db/pool";
 import { completeApprovalAndEnqueue } from "../services/actionService";
 import { writeAuditEventTx, AuditEventType } from "../services/audit";
 import { requireAuth, isManager } from "../middleware/auth";
+import { parseBody, notFound, forbidden, conflict } from "../middleware/errors";
+import { grantApprovalBody, denyApprovalBody } from "../schemas";
 import { ActorType } from "@iisl/shared";
 
 async function approvalsEnabled(tenantId: string): Promise<boolean> {
@@ -53,7 +55,7 @@ export async function approvalRoutes(app: FastifyInstance): Promise<void> {
       );
 
       if (result.rows.length === 0) {
-        return reply.status(404).send({ error: "Approval request not found" });
+        throw notFound("Approval request not found");
       }
 
       return reply.send(result.rows[0]);
@@ -91,25 +93,27 @@ export async function approvalRoutes(app: FastifyInstance): Promise<void> {
     const { tenantId, principalId } = request.auth;
 
     if (!(await approvalsEnabled(tenantId))) {
-      return reply.status(403).send({
-        error: "Approval flow is not enabled for this tenant",
-        hint: "Set tenant_config.approvals_enabled = true to enable approval flows",
-      });
+      throw forbidden(
+        "Approval flow is not enabled for this tenant",
+        "Set tenant_config.approvals_enabled = true to enable approval flows."
+      );
     }
 
     if (!(await isManager(tenantId, principalId))) {
-      return reply.status(403).send({
-        error: "This principal is not authorized to approve actions",
-        hint: "Approval requires an active manager_grants entry for this tenant.",
-      });
+      throw forbidden(
+        "This principal is not authorized to approve actions",
+        "Approval requires an active manager_grants entry for this tenant."
+      );
     }
+
+    const { notes } = parseBody(grantApprovalBody, request.body ?? {});
 
     try {
       const executionId = await completeApprovalAndEnqueue(
         tenantId,
         request.params.approval_id,
         principalId,
-        request.body?.notes
+        notes
       );
 
       return reply.status(200).send({
@@ -121,10 +125,9 @@ export async function approvalRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("not found") || msg.includes("expired")) {
-        return reply.status(409).send({ error: msg });
+        throw conflict(msg);
       }
-      request.log.error({ err }, "Approval grant failed");
-      return reply.status(500).send({ error: "Approval grant failed" });
+      throw err;
     }
   });
 
@@ -139,16 +142,14 @@ export async function approvalRoutes(app: FastifyInstance): Promise<void> {
     const { tenantId, principalId } = request.auth;
 
     if (!(await approvalsEnabled(tenantId))) {
-      return reply.status(403).send({ error: "Approval flow is not enabled" });
+      throw forbidden("Approval flow is not enabled for this tenant");
     }
 
     if (!(await isManager(tenantId, principalId))) {
-      return reply.status(403).send({
-        error: "This principal is not authorized to approve actions",
-      });
+      throw forbidden("This principal is not authorized to approve actions");
     }
 
-    const reason = request.body?.reason;
+    const { reason } = parseBody(denyApprovalBody, request.body ?? {});
 
     try {
       await withTransaction(async (client) => {
@@ -183,7 +184,7 @@ export async function approvalRoutes(app: FastifyInstance): Promise<void> {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("not found") || msg.includes("already resolved")) {
-        return reply.status(409).send({ error: msg });
+        throw conflict(msg);
       }
       throw err;
     }

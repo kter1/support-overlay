@@ -1,0 +1,32 @@
+{
+  "name": "Resolution Card",
+  "author": {
+    "name": "support-overlay",
+    "email": "support@example.com"
+  },
+  "defaultLocale": "en",
+  "private": true,
+  "location": {
+    "support": {
+      "ticket_sidebar": {
+        "url": "assets/index.html",
+        "flexible": true
+      }
+    }
+  },
+  "parameters": [
+    {
+      "name": "backend_url",
+      "type": "text",
+      "required": true,
+      "secure": false
+    },
+    {
+      "name": "backend_token",
+      "type": "text",
+      "required": true,
+      "secure": true
+    }
+  ],
+  "frameworkVersion": "2.0"
+}

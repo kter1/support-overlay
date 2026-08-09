@@ -12,6 +12,7 @@ import { FastifyInstance } from "fastify";
 import { query } from "../db/pool";
 import { computeFreshness } from "../services/freshness";
 import { requireAuth } from "../middleware/auth";
+import { notFound } from "../middleware/errors";
 
 export async function cardRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("onRequest", requireAuth("agent"));
@@ -52,10 +53,9 @@ export async function cardRoutes(app: FastifyInstance): Promise<void> {
       );
 
       if (cardResult.rows.length === 0) {
-        return reply.status(404).send({
-          error: "No issue found for this ticket",
-          zendesk_ticket_id,
-        });
+        throw notFound(
+          "No resolution record exists for this ticket yet."
+        );
       }
 
       const card = cardResult.rows[0];

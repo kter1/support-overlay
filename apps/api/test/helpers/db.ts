@@ -1,19 +1,24 @@
 /**
- * In-process Postgres for tests.
+ * Postgres for tests.
  *
- * Runs the real migration files against PGlite (Postgres compiled to WASM), so
- * tests exercise actual SQL — column names, constraints, triggers — rather than
- * mocks. This is what catches schema/code drift.
+ * Two backends, chosen automatically:
  *
- * Limitation: PGlite is a single connection, so these tests cannot exercise
- * genuine multi-connection contention (FOR UPDATE SKIP LOCKED across workers).
- * Concurrency behaviour is covered by replaying a claim sequentially, which
- * catches dedupe bugs but not lock-ordering bugs. Multi-worker contention needs
- * a real Postgres — see TESTS.md.
+ *   TEST_DATABASE_URL set → a real Postgres server, with a throwaway database
+ *     per suite. Required for anything that depends on genuine multi-connection
+ *     behaviour: FOR UPDATE SKIP LOCKED, row locks, concurrent claims.
+ *   otherwise            → PGlite (Postgres compiled to WASM), in-process and
+ *     dependency-free, but a single connection.
+ *
+ * Either way the real files in db/migrations/ are applied, so tests exercise
+ * actual SQL — column names, constraints, triggers — and schema/code drift
+ * fails here rather than at demo time.
  */
 import { PGlite } from "@electric-sql/pglite";
+import { Pool } from "pg";
 import * as fs from "fs";
 import * as path from "path";
+import { randomBytes } from "crypto";
+import { describe } from "vitest";
 import { setDriver, DbDriver } from "../../src/db/pool";
 
 const MIGRATIONS_DIR = path.join(__dirname, "../../../../db/migrations");
@@ -21,11 +26,25 @@ const SEED_FILE = path.join(__dirname, "../../../../db/seed.sql");
 
 export interface TestDb {
   driver: DbDriver;
-  raw: PGlite;
+  /** True when backed by a real server, so concurrency assertions are meaningful. */
+  isRealPostgres: boolean;
   /** Load db/seed.sql. Off by default so tests start from an empty schema. */
   seed(): Promise<void>;
+  /** Run raw SQL that may contain multiple statements. */
+  exec(sql: string): Promise<void>;
   close(): Promise<void>;
 }
+
+/** A real server is available when TEST_DATABASE_URL points at one. */
+export const REAL_POSTGRES_URL = process.env.TEST_DATABASE_URL ?? "";
+export const hasRealPostgres = REAL_POSTGRES_URL !== "";
+
+/**
+ * Skip helper for suites that are only meaningful against a real server.
+ * These are not optional coverage — CI runs a Postgres service so they execute
+ * there; locally they skip rather than pass misleadingly.
+ */
+export const describeRealPostgres = hasRealPostgres ? describe : describe.skip;
 
 /**
  * Adapt PGlite to the slice of the node-postgres interface the app uses.
@@ -57,20 +76,29 @@ function adapt(db: PGlite): DbDriver {
   } as unknown as DbDriver;
 }
 
+function migrationSql(): Array<{ file: string; sql: string }> {
+  return fs
+    .readdirSync(MIGRATIONS_DIR)
+    .filter((f) => f.endsWith(".sql"))
+    .sort()
+    .map((file) => ({
+      file,
+      sql: fs.readFileSync(path.join(MIGRATIONS_DIR, file), "utf-8"),
+    }));
+}
+
 /**
  * Start a fresh database with all migrations applied, and point the app's query
  * helpers at it. Call close() in afterEach to restore the previous driver.
  */
 export async function createTestDb(): Promise<TestDb> {
+  return hasRealPostgres ? createServerDb() : createPgliteDb();
+}
+
+async function createPgliteDb(): Promise<TestDb> {
   const db = new PGlite();
 
-  const files = fs
-    .readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith(".sql"))
-    .sort();
-
-  for (const file of files) {
-    const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, file), "utf-8");
+  for (const { file, sql } of migrationSql()) {
     try {
       await db.exec(sql);
     } catch (err) {
@@ -85,13 +113,67 @@ export async function createTestDb(): Promise<TestDb> {
 
   return {
     driver,
-    raw: db,
+    isRealPostgres: false,
     async seed() {
       await db.exec(fs.readFileSync(SEED_FILE, "utf-8"));
+    },
+    async exec(sql: string) {
+      await db.exec(sql);
     },
     async close() {
       setDriver(previous);
       await db.close();
+    },
+  };
+}
+
+/**
+ * A throwaway database on a real server. Each suite gets its own, so parallel
+ * test files cannot see each other's rows.
+ */
+async function createServerDb(): Promise<TestDb> {
+  const dbName = `overlay_test_${randomBytes(6).toString("hex")}`;
+  const admin = new Pool({ connectionString: REAL_POSTGRES_URL });
+
+  await admin.query(`CREATE DATABASE ${dbName}`);
+  await admin.end();
+
+  const url = new URL(REAL_POSTGRES_URL);
+  url.pathname = `/${dbName}`;
+
+  // More than one connection, which is the entire point: concurrency tests need
+  // to hold two sessions at once.
+  const pool = new Pool({ connectionString: url.toString(), max: 8 });
+
+  for (const { file, sql } of migrationSql()) {
+    try {
+      await pool.query(sql);
+    } catch (err) {
+      throw new Error(
+        `Migration ${file} failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  const driver = pool as unknown as DbDriver;
+  const previous = setDriver(driver);
+
+  return {
+    driver,
+    isRealPostgres: true,
+    async seed() {
+      await pool.query(fs.readFileSync(SEED_FILE, "utf-8"));
+    },
+    async exec(sql: string) {
+      await pool.query(sql);
+    },
+    async close() {
+      setDriver(previous);
+      await pool.end();
+
+      const cleanup = new Pool({ connectionString: REAL_POSTGRES_URL });
+      await cleanup.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await cleanup.end();
     },
   };
 }

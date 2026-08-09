@@ -319,6 +319,7 @@ export const AuditEventType = {
 
   // Evidence
   EVIDENCE_FETCHED: "evidence_fetched",
+  EVIDENCE_MATCH_COMPUTED: "evidence_match_computed",
   EVIDENCE_FETCH_FAILED: "evidence_fetch_failed",
   EVIDENCE_OUTDATED: "evidence_outdated",
 
