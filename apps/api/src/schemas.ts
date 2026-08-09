@@ -67,3 +67,20 @@ export const syncZendeskBody = z.object({
   reason: z.string().min(5, "explain why this sync is needed").max(2000),
   target_status: z.enum(["new", "open", "pending", "hold", "solved", "closed"]),
 });
+
+/**
+ * Tenant config updates from /ops. Every field optional, but an empty body is
+ * rejected — a no-op "update" in the audit log would be noise pretending to be
+ * a change.
+ */
+export const tenantConfigBody = z
+  .object({
+    approvals_enabled: z.boolean().optional(),
+    evidence_freshness_seconds: z.number().int().min(30).max(86_400).optional(),
+    refund_amount_tolerance_pct: z.number().min(0).max(100).optional(),
+    reopen_gate_count: z.number().int().min(1).max(50).optional(),
+    manager_approval_threshold_cents: z.number().int().min(0).optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "supply at least one setting to change",
+  });

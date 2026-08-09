@@ -134,7 +134,7 @@ curl -X PATCH http://localhost:3001/ops/action-executions/<execution-id>/reconci
 ### Enable approvals for the demo tenant
 
 ```bash
-curl -X PATCH http://localhost:3001/ops/tenants/00000000-0000-0000-0000-000000000001/config \
+curl -X PATCH http://localhost:3001/ops/tenant-config \
   -H "Authorization: Bearer $OPERATOR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"approvals_enabled": true}'
@@ -165,7 +165,7 @@ curl -X PATCH http://localhost:3001/ops/tenants/00000000-0000-0000-0000-00000000
 ### Disable approvals again
 
 ```bash
-curl -X PATCH http://localhost:3001/ops/tenants/00000000-0000-0000-0000-000000000001/config \
+curl -X PATCH http://localhost:3001/ops/tenant-config \
   -H "Authorization: Bearer $OPERATOR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"approvals_enabled": false}'

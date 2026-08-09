@@ -22,6 +22,7 @@ import {
   reconcileBody,
   operatorRepairBody,
   syncZendeskBody,
+  tenantConfigBody,
 } from "../schemas";
 import { recomputeMatchForIssue } from "../services/matching";
 import { rebuildCardState } from "../workers/outboxWorker";
@@ -382,6 +383,128 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
       confidence_score: match.confidenceScore,
       matched_fields: match.matchedFields,
       notes: match.notes,
+      correlation_id: request.correlationId,
+    });
+  });
+
+  /**
+   * GET /ops/audit/:issue_id
+   *
+   * The audit trail for one issue, oldest first. This export is the artifact
+   * the whole system exists to produce: every policy decision with its rule id
+   * and version, every execution transition, every operator intervention.
+   */
+  app.get<{
+    Params: { issue_id: string };
+    Querystring: { limit?: string };
+  }>("/audit/:issue_id", async (request, reply) => {
+    const { tenantId } = request.auth;
+    const limit = Math.min(parseInt(request.query.limit ?? "200", 10) || 200, 1000);
+
+    const result = await query(
+      `SELECT id, event_type, actor_type, actor_id, payload,
+              policy_rule_id, policy_version, normalizer_version,
+              match_algorithm_version, correlation_id, created_at
+         FROM audit_log
+        WHERE tenant_id = $1 AND issue_id = $2
+        ORDER BY created_at ASC
+        LIMIT $3`,
+      [tenantId, request.params.issue_id, limit]
+    );
+
+    return reply.send({
+      issue_id: request.params.issue_id,
+      event_count: result.rows.length,
+      events: result.rows,
+      correlation_id: request.correlationId,
+    });
+  });
+
+  /**
+   * GET /ops/action-executions
+   *
+   * Recent executions, filterable by status. The reconcile workflow starts
+   * here: list FAILED_TERMINAL, pick one, PATCH its reconciliation.
+   */
+  app.get<{
+    Querystring: { status?: string; limit?: string };
+  }>("/action-executions", async (request, reply) => {
+    const { tenantId } = request.auth;
+    const limit = Math.min(parseInt(request.query.limit ?? "50", 10) || 50, 500);
+    const status = request.query.status;
+
+    const result = await query(
+      `SELECT id, issue_id, action_type, requested_by_agent_id, status,
+              planned_state, attempt_count, error, policy_rule_id,
+              reconciled_at, reconciled_by, reconciliation_outcome,
+              created_at, completed_at
+         FROM action_executions
+        WHERE tenant_id = $1
+          AND ($2::text IS NULL OR status = $2)
+        ORDER BY created_at DESC
+        LIMIT $3`,
+      [tenantId, status ?? null, limit]
+    );
+
+    return reply.send({
+      executions: result.rows,
+      correlation_id: request.correlationId,
+    });
+  });
+
+  /**
+   * PATCH /ops/tenant-config
+   *
+   * Update this tenant's own config — the tenant is the credential's, never a
+   * path parameter. Changes are audited with before/after values, because a
+   * silent flip of approvals_enabled is exactly the kind of thing an audit
+   * trail exists to catch.
+   */
+  app.patch("/tenant-config", async (request, reply) => {
+    const { tenantId, principalId } = request.auth;
+    const changes = parseBody(tenantConfigBody, request.body);
+
+    const before = await query<Record<string, unknown>>(
+      `SELECT approvals_enabled, evidence_freshness_seconds,
+              refund_amount_tolerance_pct, reopen_gate_count,
+              manager_approval_threshold_cents
+         FROM tenant_config WHERE tenant_id = $1`,
+      [tenantId]
+    );
+    if (before.rows.length === 0) {
+      throw notFound("Tenant configuration not found");
+    }
+
+    const entries = Object.entries(changes);
+    const setClauses = entries
+      .map(([key], i) => `${key} = $${i + 2}`)
+      .join(", ");
+
+    const updated = await query<Record<string, unknown>>(
+      `UPDATE tenant_config
+          SET ${setClauses}, updated_at = now()
+        WHERE tenant_id = $1
+        RETURNING approvals_enabled, evidence_freshness_seconds,
+                  refund_amount_tolerance_pct, reopen_gate_count,
+                  manager_approval_threshold_cents`,
+      [tenantId, ...entries.map(([, value]) => value)]
+    );
+
+    await writeAuditEvent({
+      tenantId,
+      eventType: AuditEventType.TENANT_CONFIG_CHANGED,
+      actorType: ActorType.OPERATOR,
+      actorId: principalId,
+      payload: {
+        changed: changes,
+        before: before.rows[0],
+        after: updated.rows[0],
+        correlation_id: request.correlationId,
+      },
+    });
+
+    return reply.send({
+      config: updated.rows[0],
       correlation_id: request.correlationId,
     });
   });

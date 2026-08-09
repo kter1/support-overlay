@@ -10,11 +10,14 @@ failure is how customers get refunded twice. Here it is a first-class outcome �
 `SENT_UNCERTAIN` — resolved by reading provider state, and for money movement
 never resolved by retrying.
 
-**Status: prototype, installable.** The exactly-once machinery, matching engine,
-policy engine, audit trail, and the Zendesk app package are implemented and
-tested — including multi-worker contention against a real Postgres. Connectors
-run against fixture simulators by default and have not been exercised against
-live provider APIs, and the app has not been loaded in a live Zendesk instance.
+**Status: prototype, installable, exercised end to end.** The exactly-once
+machinery, matching engine, policy engine, audit trail, and the Zendesk app
+package are implemented and tested — including multi-worker contention against
+a real Postgres — and the full stack (API, worker, sidebar) has been run live:
+auth enforced, match bands computed, an approval-gated refund executed through
+the outbox, and the audit trail exported. Connectors run against fixture
+simulators by default and have not been exercised against live provider APIs,
+and the app has not been loaded in a live Zendesk instance.
 
 ## Table Of Contents
 
