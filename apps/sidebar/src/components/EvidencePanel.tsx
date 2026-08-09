@@ -6,6 +6,22 @@
 
 import React from "react";
 
+/** Narrow an unknown summary field for display; "" reads as absent. */
+function text(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  return String(value);
+}
+
+/** Narrow an unknown summary field to a number, if it is one. */
+function num(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
 interface EvidencePanelProps {
   evidenceSummary: Record<string, unknown>;
   matchBand: string | null;
@@ -31,26 +47,26 @@ export default function EvidencePanel({
 
       <div style={styles.grid}>
         {/* Stripe Evidence */}
-        {evidenceSummary.stripeRefundId && (
+        {text(evidenceSummary.stripeRefundId) !== "" && (
           <DetailBlock
             title="Stripe Refund"
             items={[
-              ["ID", String(evidenceSummary.stripeRefundId)],
-              ["Status", String(evidenceSummary.stripeRefundStatus ?? "—")],
-              ["Amount", formatCents(evidenceSummary.stripeChargeAmount as number | undefined, evidenceSummary.stripeCurrency as string | undefined)],
+              ["ID", text(evidenceSummary.stripeRefundId) || "—"],
+              ["Status", text(evidenceSummary.stripeRefundStatus) || "—"],
+              ["Amount", formatCents(num(evidenceSummary.stripeChargeAmount), text(evidenceSummary.stripeCurrency))],
             ]}
           />
         )}
 
         {/* Shopify Evidence */}
-        {evidenceSummary.shopifyOrderId && (
+        {text(evidenceSummary.shopifyOrderId) !== "" && (
           <DetailBlock
             title="Shopify Order"
             items={[
-              ["Order", String(evidenceSummary.shopifyOrderName ?? evidenceSummary.shopifyOrderId)],
-              ["Financial", String(evidenceSummary.shopifyFinancialStatus ?? "—")],
-              ["Fulfillment", String(evidenceSummary.shopifyFulfillmentStatus ?? "—")],
-              ["Total", formatCents(evidenceSummary.shopifyOrderTotal as number | undefined, evidenceSummary.shopifyOrderCurrency as string | undefined)],
+              ["Order", text(evidenceSummary.shopifyOrderName) || text(evidenceSummary.shopifyOrderId)],
+              ["Financial", text(evidenceSummary.shopifyFinancialStatus) || "—"],
+              ["Fulfillment", text(evidenceSummary.shopifyFulfillmentStatus) || "—"],
+              ["Total", formatCents(num(evidenceSummary.shopifyOrderTotal), text(evidenceSummary.shopifyOrderCurrency))],
             ]}
           />
         )}

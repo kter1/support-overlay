@@ -15,28 +15,14 @@
 import { FastifyInstance } from "fastify";
 import { query, withTransaction } from "../db/pool";
 import { writeAuditEventTx, AuditEventType } from "../services/audit";
+import { ZendeskAdapter } from "@iisl/connectors";
+import { requireAuth } from "../middleware/auth";
 import { ActorType } from "@iisl/shared";
 
-const OPERATOR_TOKEN = process.env.OPERATOR_TOKEN ?? "dev_operator_token_change_in_prod";
-
-/**
- * Operator authentication middleware.
- * In production: replace with proper JWT/RBAC. For pilot: bearer token check.
- */
-function requireOperator(request: any, reply: any, done: () => void): void {
-  const authHeader = request.headers["authorization"] as string;
-  const token = authHeader?.replace("Bearer ", "");
-
-  if (!token || token !== OPERATOR_TOKEN) {
-    reply.status(401).send({ error: "Operator authentication required" });
-    return;
-  }
-
-  done();
-}
-
 export async function opsRoutes(app: FastifyInstance): Promise<void> {
-  app.addHook("onRequest", requireOperator);
+  // Operator credentials carry their own tenant, so these repair endpoints can
+  // only ever touch the tenant the token belongs to.
+  app.addHook("onRequest", requireAuth("operator"));
 
   /**
    * POST /ops/issues/:issue_id/rebuild-card-state
@@ -49,8 +35,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
     Params: { issue_id: string };
     Body: { reason: string };
   }>("/issues/:issue_id/rebuild-card-state", async (request, reply) => {
-    const tenantId = request.headers["x-tenant-id"] as string;
-    if (!tenantId) return reply.status(401).send({ error: "x-tenant-id required" });
+    const { tenantId } = request.auth;
 
     const { issue_id } = request.params;
     const { reason } = request.body;
@@ -131,8 +116,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
     Params: { event_id: string };
     Body: { reason: string };
   }>("/inbound-events/:event_id/replay", async (request, reply) => {
-    const tenantId = request.headers["x-tenant-id"] as string;
-    if (!tenantId) return reply.status(401).send({ error: "x-tenant-id required" });
+    const { tenantId } = request.auth;
 
     const { event_id } = request.params;
     const { reason } = request.body;
@@ -183,7 +167,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { event_id: string } }>(
     "/inbound-events/:event_id",
     async (request, reply) => {
-      const tenantId = request.headers["x-tenant-id"] as string;
+      const { tenantId } = request.auth;
       const result = await query(
         `SELECT id, source_system, source_event_type, status, error, received_at, processed_at
          FROM inbound_events WHERE id = $1 AND tenant_id = $2`,
@@ -218,8 +202,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
       corrective_action_taken?: string;
     };
   }>("/action-executions/:execution_id/reconcile", async (request, reply) => {
-    const tenantId = request.headers["x-tenant-id"] as string;
-    if (!tenantId) return reply.status(401).send({ error: "x-tenant-id required" });
+    const { tenantId } = request.auth;
 
     const { execution_id } = request.params;
     const {
@@ -238,22 +221,28 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
     await withTransaction(async (client) => {
       const result = await client.query<{ id: string; issue_id: string; status: string }>(
         `UPDATE action_executions
-         SET reconciled_at = now(),
-             reconciled_by = $2,
-             reconciliation_outcome = $3
-         WHERE id = $1 AND tenant_id = $4 AND status = 'FAILED_TERMINAL'
-         RETURNING id, issue_id, status`,
+            SET reconciled_at = now(),
+                reconciled_by = $2,
+                reconciliation_outcome = $3,
+                investigation_notes = $5,
+                corrective_action_taken = $6
+          WHERE id = $1 AND tenant_id = $4
+            AND status IN ('FAILED_TERMINAL', 'BLOCKED_OPERATOR')
+            AND reconciled_at IS NULL
+          RETURNING id, issue_id, status`,
         [
           execution_id,
-          request.headers["x-operator-id"] ?? "operator",
+          request.auth.principalId,
           external_side_effect_status,
           tenantId,
+          investigation_notes,
+          corrective_action_taken ?? null,
         ]
       );
 
       if (result.rows.length === 0) {
         throw new Error(
-          "Execution not found, not FAILED_TERMINAL, or already reconciled"
+          "Execution not found, not awaiting reconciliation, or already reconciled"
         );
       }
 
@@ -262,7 +251,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
         issueId: result.rows[0].issue_id,
         eventType: AuditEventType.OPERATOR_RECONCILE_EXECUTION,
         actorType: ActorType.OPERATOR,
-        actorId: request.headers["x-operator-id"] as string,
+        actorId: request.auth.principalId,
         payload: {
           execution_id,
           external_side_effect_status,
@@ -293,8 +282,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
     Params: { issue_id: string };
     Body: { reason: string; target_status: "open" | "pending" | "solved" };
   }>("/issues/:issue_id/sync-zendesk", async (request, reply) => {
-    const tenantId = request.headers["x-tenant-id"] as string;
-    if (!tenantId) return reply.status(401).send({ error: "x-tenant-id required" });
+    const { tenantId } = request.auth;
 
     const { issue_id } = request.params;
     const { reason, target_status } = request.body;
@@ -320,10 +308,6 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
 
     const { zendesk_ticket_id } = ticketResult.rows[0];
 
-    // Import adapter inline to avoid circular deps
-    const { ZendeskAdapter } = await import(
-      "../../../../packages/connectors/src/zendesk/adapter"
-    );
     const adapter = new ZendeskAdapter();
 
     try {

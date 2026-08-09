@@ -20,8 +20,80 @@
  */
 
 import { Pool } from "pg";
+import { createHash } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
+
+const DEMO_TENANT = "00000000-0000-0000-0000-000000000001";
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+/**
+ * Provision API credentials from the environment.
+ *
+ * Only the SHA-256 hash is stored, and the plaintext never enters seed.sql, so
+ * a usable token is never committed. Re-running rotates the stored hash to
+ * whatever the current environment holds.
+ */
+async function seedCredentials(client: {
+  query: (sql: string, params?: unknown[]) => Promise<unknown>;
+}): Promise<void> {
+  const credentials: Array<{ role: string; token?: string; principal: string }> = [
+    { role: "agent", token: process.env.AGENT_TOKEN, principal: "agent-demo-001" },
+    { role: "operator", token: process.env.OPERATOR_TOKEN, principal: "operator-demo" },
+    { role: "webhook", token: process.env.WEBHOOK_TOKEN, principal: "webhook-ingest" },
+  ];
+
+  for (const credential of credentials) {
+    if (!credential.token) {
+      console.warn(
+        `  ! ${credential.role.toUpperCase()}_TOKEN not set — skipping ${credential.role} credential`
+      );
+      continue;
+    }
+
+    await client.query(
+      `INSERT INTO api_credentials (tenant_id, role, token_sha256, principal_id, description)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (token_sha256) DO UPDATE
+         SET is_active = true, revoked_at = NULL`,
+      [
+        DEMO_TENANT,
+        credential.role,
+        sha256(credential.token),
+        credential.principal,
+        `Demo ${credential.role} credential`,
+      ]
+    );
+    console.log(`  ✓ ${credential.role} credential provisioned`);
+  }
+}
+
+/**
+ * Webhook signing secrets are per-tenant. Without one configured, webhook
+ * verification fails closed rather than falling back to a shared default.
+ */
+async function seedWebhookSecrets(client: {
+  query: (sql: string, params?: unknown[]) => Promise<unknown>;
+}): Promise<void> {
+  const secrets: Array<[string, string | undefined]> = [
+    ["zendesk", process.env.ZENDESK_WEBHOOK_SECRET],
+    ["stripe", process.env.STRIPE_WEBHOOK_SECRET],
+    ["shopify", process.env.SHOPIFY_WEBHOOK_SECRET],
+  ];
+
+  for (const [system, secret] of secrets) {
+    if (!secret) continue;
+    await client.query(
+      `UPDATE tenant_integrations SET webhook_secret = $3, updated_at = now()
+        WHERE tenant_id = $1 AND source_system = $2`,
+      [DEMO_TENANT, system, secret]
+    );
+    console.log(`  ✓ ${system} webhook secret set`);
+  }
+}
 
 function normalizeDatabaseUrl(raw?: string): string | undefined {
   if (!raw) return raw;
@@ -47,11 +119,18 @@ async function main() {
   try {
     // ── Idempotency check ─────────────────────────────────────────────────
     const { rows } = await client.query<{ id: string }>(
-      `SELECT id FROM tenants WHERE id = '00000000-0000-0000-0000-000000000001' LIMIT 1`
+      `SELECT id FROM tenants WHERE id = $1 LIMIT 1`,
+      [DEMO_TENANT]
     );
 
     if (rows.length > 0) {
-      console.log("✓ Demo seed data already present — skipping (run demo:reset for a fresh start)");
+      // Data is already there, but credentials still track the current
+      // environment — re-provision them so a rotated token keeps working.
+      console.log("✓ Demo data already present — refreshing credentials only");
+      await client.query("BEGIN");
+      await seedCredentials(client);
+      await seedWebhookSecrets(client);
+      await client.query("COMMIT");
       return;
     }
 
@@ -61,11 +140,13 @@ async function main() {
 
     await client.query("BEGIN");
     await client.query(seedSql);
+    await seedCredentials(client);
+    await seedWebhookSecrets(client);
     await client.query("COMMIT");
 
     console.log("✓ Demo data seeded:");
-    console.log("  Tenant:   Acme Support Co (00000000-0000-0000-0000-000000000001)");
-    console.log("  Tickets:  10001 (happy path), 10002 (degraded), 10003 (retry)");
+    console.log(`  Tenant:   Acme Support Co (${DEMO_TENANT})`);
+    console.log("  Tickets:  10001 (happy path), 10002 (degraded), 10003 (awaiting reconciliation)");
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
     console.error("✗ Seed failed:", err);

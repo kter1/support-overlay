@@ -34,8 +34,7 @@ interface ActionPanelProps {
   onRefetch: () => void;
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3001";
-const TENANT_ID = "00000000-0000-0000-0000-000000000001"; // Demo tenant
+import { API_BASE, authHeaders } from "../config";
 
 export default function ActionPanel({ card, agentId, onActionComplete, onRefetch }: ActionPanelProps) {
   const [submitting, setSubmitting] = useState<string | null>(null);
@@ -66,8 +65,7 @@ export default function ActionPanel({ card, agentId, onActionComplete, onRefetch
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-tenant-id": TENANT_ID,
-          "x-agent-id": agentId,
+          ...authHeaders(),
         },
         body: JSON.stringify({
           action_type: cta.actionType,
