@@ -10,11 +10,11 @@ failure is how customers get refunded twice. Here it is a first-class outcome �
 `SENT_UNCERTAIN` — resolved by reading provider state, and for money movement
 never resolved by retrying.
 
-**Status: prototype.** The exactly-once machinery, policy engine, and audit
-trail are implemented and tested. Evidence match scoring is not — `match_band`
-comes from seed data, and there is no matching engine yet. Connectors run
-against fixture simulators by default and have not been exercised against live
-provider APIs.
+**Status: prototype, installable.** The exactly-once machinery, matching engine,
+policy engine, audit trail, and the Zendesk app package are implemented and
+tested — including multi-worker contention against a real Postgres. Connectors
+run against fixture simulators by default and have not been exercised against
+live provider APIs, and the app has not been loaded in a live Zendesk instance.
 
 ## Table Of Contents
 
@@ -36,10 +36,17 @@ provider APIs.
 - **Per-action retry classification.** Money movement is `OPERATOR_RETRY_ONLY`
   and is never auto-retried; ticket status is `RECONCILIATION_FIRST` (read the
   provider before retrying); comments are `AUTO_RETRY_WITH_DEDUPE`.
+- **Explainable evidence matching.** A deterministic scorer compares payment and
+  order evidence — identifier linkage, amount, currency, refund status, timing —
+  and stores the band with the sentence that justifies it. Rule-based on
+  purpose: a confidence score nobody can reconstruct is worse than none.
 - **Table-driven policy** emitting `policy_rule_id` and `policy_version` on
   every evaluation, with approval lifecycle support.
 - **Token-derived tenancy.** Bearer credentials carry their tenant and role;
   no endpoint accepts a caller-supplied tenant id.
+- **Real Zendesk app.** ZAF v2 ticket sidebar; `npm run app:package` produces an
+  installable zip. Backend calls go through Zendesk's server-side proxy, so the
+  credential never reaches the browser. See `docs/ZENDESK_APP.md`.
 - One-command local startup: `npm run demo:start`. Diagnostics: `npm run doctor`.
   Smoke checks: `npm run demo:smoke`.
 
@@ -101,6 +108,16 @@ npm run demo:reset
 
 Alt text: architecture diagram showing Zendesk sidebar -> Fastify API -> Postgres -> outbox worker -> Stripe, Shopify, and Zendesk connectors.
 
+## Zendesk app
+
+```bash
+npm run app:package   # → dist/zendesk-app.zip
+```
+
+Upload via Admin Center → Apps and integrations → Upload private app. Full
+install guide, including why the token stays server-side:
+[`docs/ZENDESK_APP.md`](docs/ZENDESK_APP.md).
+
 ## Architecture
 
 See `ARCHITECTURE.md` for component details, data flows, and diagram source.
@@ -130,12 +147,17 @@ CI validates:
 1. ESLint and full typecheck across every package.
 2. The test suite, which runs an in-process Postgres (PGlite) against the real
    migration files — so schema/code drift fails CI rather than the demo.
-3. End-to-end local smoke flow (`demo:start` + `demo:smoke`) on a Linux runner.
+3. The Zendesk app manifest and package build.
+4. End-to-end local smoke flow (`demo:start` + `demo:smoke`) on a Linux runner.
 
-See `TESTS.md`. The suite that matters most is
-`apps/api/test/exactly-once.test.ts`: it drives real timeouts and provider
-rejections through the adapter and asserts on the effects ledger and the
-provider's own record of what happened.
+CI runs a Postgres service so the multi-worker concurrency suite executes rather
+than skipping, and fails if it did not run.
+
+See `TESTS.md`. The two suites that matter most are
+`apps/api/test/exactly-once.test.ts` — real timeouts and provider rejections
+driven through the adapter, asserted against the effects ledger and the
+provider's own record — and `apps/api/test/concurrency.test.ts`, which races
+real workers over a shared backlog.
 
 ## Contributing
 

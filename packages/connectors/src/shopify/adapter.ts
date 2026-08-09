@@ -2,13 +2,23 @@
  * @file packages/connectors/src/shopify/adapter.ts
  * @description Shopify connector with fixture simulator fallback.
  *
- * Handles archived order tombstone semantics per spec §4.2.4:
- *   - Archived orders return 404 from Shopify API
- *   - On 404: set evidence_normalized.is_source_unavailable = true
- *   - Do not delete evidence. Card shows source-unavailable message.
+ * Archived orders are a tombstone, not a failure: Shopify returns 404, and the
+ * correct response is to mark evidence_normalized.is_source_unavailable and
+ * keep showing the last known state. Evidence is never deleted.
  *
- * Validation level: [Compile: pending npm install]
+ * Failures are classified the same way as the other connectors so the worker
+ * can apply the right retry policy:
+ *   TimeoutError           → request sent, outcome unknown
+ *   PermanentError         → 4xx that retrying cannot fix
+ *   SourceUnavailableError → the record is gone; tombstone rather than retry
+ *   Error                  → retriable
  */
+import { TimeoutError, PermanentError } from "@iisl/shared";
+
+function isAbort(err: unknown): boolean {
+  const name = (err as { name?: string } | null)?.name;
+  return name === "AbortError" || name === "TimeoutError";
+}
 
 export interface ShopifyOrder {
   id: string;
@@ -82,22 +92,48 @@ export class ShopifyAdapter {
     }
 
     const url = `https://${shop}.myshopify.com/admin/api/2024-01/orders/${orderId}.json`;
-    const response = await fetch(url, {
-      headers: {
-        "X-Shopify-Access-Token": this.accessToken,
-        "Content-Type": "application/json",
-      },
-    });
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: {
+          "X-Shopify-Access-Token": this.accessToken,
+          "Content-Type": "application/json",
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch (err) {
+      if (isAbort(err)) {
+        throw new TimeoutError(`Shopify request timed out for order ${orderId}`);
+      }
+      throw err;
+    }
 
     if (response.status === 404) {
       throw new SourceUnavailableError(
         `Shopify order ${orderId} returned 404 — likely archived or deleted. ` +
-        "Verify via Shopify admin if needed. Evidence will show source-unavailable state."
+        "The case record is preserved and the last known state is shown."
+      );
+    }
+
+    if (response.status === 408 || response.status === 504) {
+      throw new TimeoutError(
+        `Shopify timed out reading order ${orderId} (HTTP ${response.status})`
+      );
+    }
+
+    if (response.status === 429) {
+      throw new Error(`Shopify rate limited order ${orderId} (HTTP 429)`);
+    }
+
+    if (response.status >= 400 && response.status < 500) {
+      throw new PermanentError(
+        `Shopify rejected the request for order ${orderId} (HTTP ${response.status})`
       );
     }
 
     if (!response.ok) {
-      throw new Error(`Shopify getOrder failed: ${response.status} ${await response.text()}`);
+      throw new Error(`Shopify failed reading order ${orderId} (HTTP ${response.status})`);
     }
 
     const body = await response.json() as { order: ShopifyOrder };

@@ -13,4 +13,8 @@ export {
   type StripeCharge,
   type CreateRefundInput,
 } from "./stripe/adapter";
-export { ShopifyAdapter } from "./shopify/adapter";
+export {
+  ShopifyAdapter,
+  SourceUnavailableError,
+  type ShopifyOrder,
+} from "./shopify/adapter";

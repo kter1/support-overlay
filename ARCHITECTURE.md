@@ -18,6 +18,8 @@ API, a DB-backed outbox worker, PostgreSQL persistence, and provider connectors.
 - **Connectors** (`packages/connectors`): adapters for Zendesk, Stripe, and
   Shopify. They classify failures — `TimeoutError`, `PermanentError`, or
   retriable — which is what lets the worker apply the right policy per action.
+- **Matching engine** (`packages/matching`): deterministic scorer that turns
+  normalized evidence into a confidence band plus the sentence justifying it.
 - **Shared vocabulary** (`packages/shared`): the single source of enums, action
   types, retry classes, and error types. No other module may redefine these.
 
@@ -90,6 +92,36 @@ Reconciliation *appends* a `CONFIRMED` ledger entry rather than overwriting the
 `SENT_UNCERTAIN` one — the fact that the outcome was once unknown is itself the
 audit signal.
 
+## Evidence matching
+
+Five independent signals, weighted, summing to 1.0:
+
+| Signal | Weight | Why |
+|---|---:|---|
+| Identifier linkage | 0.30 | The only signal establishing identity rather than resemblance |
+| Refund amount | 0.25 | Exact match scores full; within tolerance scores most |
+| Refund status | 0.20 | `succeeded` corroborated by the order's financial status |
+| Timing | 0.15 | Inside the window corroborates; outside weakens, never disqualifies |
+| Currency | 0.10 | Cheap consistency check |
+
+Two properties are structural rather than bolted on:
+
+- **No linkage caps below HIGH.** With identifier linkage absent the remaining
+  signals total 0.70, under the 0.85 HIGH threshold. Two unrelated refunds can
+  share an amount, a currency, and a day, so resemblance alone must never be
+  presented as high confidence. Because that ceiling follows from the weights,
+  it cannot drift out of sync with a separate clamp.
+- **A contradicting identifier is disqualifying** regardless of everything else:
+  that is evidence about a different transaction.
+
+Degraded evidence (`is_source_unavailable`) caps at MEDIUM — the last known
+state may be stale.
+
+The stored `match_notes` is the product. An agent about to move money needs to
+know *why* the system is confident, and an auditor needs to reconstruct it later
+— which is also why the scorer is rule-based and deterministic rather than a
+model. Copy describes records, never customers.
+
 ## Authentication
 
 Tenancy is derived from the bearer credential, never from a request header.
@@ -101,6 +133,24 @@ Webhook signatures are verified over the **raw request body** using per-tenant
 secrets from `tenant_integrations.webhook_secret`. There is no global fallback
 secret: an unconfigured integration fails verification rather than trusting a
 default.
+
+Installed in Zendesk, the sidebar never holds a usable credential: requests go
+through ZAF's server-side proxy with `secure: true`, so `{{setting.backend_token}}`
+is substituted by Zendesk outside the browser. See `docs/ZENDESK_APP.md`.
+
+## Request handling
+
+- Bodies are validated with zod schemas (`apps/api/src/schemas.ts`) before
+  reaching the database.
+- One error envelope for every failure. Only errors explicitly constructed as
+  `ApiError` carry their message to the caller; anything else is logged in full
+  and reported as a bare 500 with a correlation id. Routes previously returned
+  thrown messages verbatim, which put raw Postgres text on the wire.
+- Rate limiting is keyed by credential, not IP — installed in Zendesk every
+  request arrives from the same proxy, so an IP bucket would let one busy
+  account throttle every other tenant.
+- `/health` is liveness (no database). `/ready` checks the database, so a
+  rolling deploy does not route to an instance that cannot serve.
 
 ## Diagram Notes
 

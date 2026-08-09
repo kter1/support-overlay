@@ -14,9 +14,17 @@
  */
 import { FastifyInstance } from "fastify";
 import { query, withTransaction } from "../db/pool";
-import { writeAuditEventTx, AuditEventType } from "../services/audit";
+import { writeAuditEvent, writeAuditEventTx, AuditEventType } from "../services/audit";
 import { ZendeskAdapter } from "@iisl/connectors";
 import { requireAuth } from "../middleware/auth";
+import { parseBody, notFound } from "../middleware/errors";
+import {
+  reconcileBody,
+  operatorRepairBody,
+  syncZendeskBody,
+} from "../schemas";
+import { recomputeMatchForIssue } from "../services/matching";
+import { rebuildCardState } from "../workers/outboxWorker";
 import { ActorType } from "@iisl/shared";
 
 export async function opsRoutes(app: FastifyInstance): Promise<void> {
@@ -38,11 +46,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
     const { tenantId } = request.auth;
 
     const { issue_id } = request.params;
-    const { reason } = request.body;
-
-    if (!reason) {
-      return reply.status(400).send({ error: "reason is required" });
-    }
+    const { reason } = parseBody(operatorRepairBody, request.body);
 
     await withTransaction(async (client) => {
       // Recompute from canonical tables
@@ -119,11 +123,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
     const { tenantId } = request.auth;
 
     const { event_id } = request.params;
-    const { reason } = request.body;
-
-    if (!reason) {
-      return reply.status(400).send({ error: "reason is required" });
-    }
+    const { reason } = parseBody(operatorRepairBody, request.body);
 
     const result = await query<{ id: string; status: string; source_system: string }>(
       `UPDATE inbound_events
@@ -134,7 +134,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
     );
 
     if (result.rows.length === 0) {
-      return reply.status(404).send({ error: "Event not found" });
+      throw notFound("Event not found");
     }
 
     await query(
@@ -175,7 +175,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
       );
 
       if (result.rows.length === 0) {
-        return reply.status(404).send({ error: "Event not found" });
+        throw notFound("Event not found");
       }
       return reply.send(result.rows[0]);
     }
@@ -209,14 +209,8 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
       external_side_effect_status,
       investigation_notes,
       corrective_action_taken,
-    } = request.body;
+    } = parseBody(reconcileBody, request.body);
 
-    if (!external_side_effect_status || !investigation_notes) {
-      return reply.status(400).send({
-        error:
-          "external_side_effect_status and investigation_notes are required",
-      });
-    }
 
     await withTransaction(async (client) => {
       const result = await client.query<{ id: string; issue_id: string; status: string }>(
@@ -285,13 +279,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
     const { tenantId } = request.auth;
 
     const { issue_id } = request.params;
-    const { reason, target_status } = request.body;
-
-    if (!reason || !target_status) {
-      return reply.status(400).send({
-        error: "reason and target_status are required",
-      });
-    }
+    const { reason, target_status } = parseBody(syncZendeskBody, request.body);
 
     // Get primary ticket ID
     const ticketResult = await query<{ zendesk_ticket_id: string }>(
@@ -313,8 +301,11 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
     try {
       await adapter.updateTicketStatus(zendesk_ticket_id, target_status);
     } catch (err) {
+      request.log.error({ err, zendesk_ticket_id }, "Zendesk force-sync failed");
       return reply.status(502).send({
-        error: `Zendesk sync failed: ${err instanceof Error ? err.message : String(err)}`,
+        error: "Zendesk did not accept the status change",
+        hint: `Quote correlation id ${request.correlationId} when investigating.`,
+        correlation_id: request.correlationId,
       });
     }
 
@@ -344,4 +335,55 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
         "Use /ops/action-executions/:id/reconcile if issue state also needs correction.",
     });
   });
+  /**
+   * POST /ops/issues/:issue_id/recompute-match
+   *
+   * Recompute the evidence match band from current evidence. Read-only with
+   * respect to providers — it re-derives from what is already stored, so it is
+   * always safe to run.
+   */
+  app.post<{
+    Params: { issue_id: string };
+    Body: { reason?: string };
+  }>("/issues/:issue_id/recompute-match", async (request, reply) => {
+    const { tenantId } = request.auth;
+    const { issue_id } = request.params;
+
+    const match = await recomputeMatchForIssue(tenantId, issue_id);
+
+    if (!match) {
+      return reply.status(404).send({
+        error: "No evidence on file for this issue",
+        hint: "Nothing to match yet — refresh evidence first.",
+      });
+    }
+
+    await writeAuditEvent({
+      tenantId,
+      issueId: issue_id,
+      eventType: AuditEventType.EVIDENCE_MATCH_COMPUTED,
+      actorType: ActorType.OPERATOR,
+      actorId: request.auth.principalId,
+      matchAlgorithmVersion: "match_v1",
+      payload: {
+        match_band: match.band,
+        confidence_score: match.confidenceScore,
+        matched_fields: match.matchedFields,
+        reason: request.body?.reason ?? null,
+        correlation_id: request.correlationId,
+      },
+    });
+
+    await rebuildCardState(tenantId, issue_id);
+
+    return reply.send({
+      issue_id,
+      match_band: match.band,
+      confidence_score: match.confidenceScore,
+      matched_fields: match.matchedFields,
+      notes: match.notes,
+      correlation_id: request.correlationId,
+    });
+  });
+
 }
