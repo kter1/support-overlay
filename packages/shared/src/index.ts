@@ -344,6 +344,9 @@ export const AuditEventType = {
   INBOUND_EVENT_FAILED: "inbound_event_failed",
   INBOUND_EVENT_REPLAYED: "inbound_event_replayed",
 
+  // Tenant administration
+  TENANT_CONFIG_CHANGED: "tenant_config_changed",
+
   // Authentication
   AUTH_REJECTED: "auth_rejected",
 } as const;
