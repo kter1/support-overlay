@@ -5,6 +5,7 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
+import { API_BASE, authHeaders } from "../config";
 
 interface CardData {
   issueId: string;
@@ -86,10 +87,6 @@ interface ApiCardResponse {
   } | null;
 }
 
-const API_BASE = typeof import.meta !== "undefined" && (import.meta as Record<string, unknown>).env
-  ? ((import.meta as Record<string, unknown>).env as Record<string, string>).VITE_API_BASE_URL ?? "http://localhost:3001"
-  : "http://localhost:3001";
-const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 const DEFAULT_UNAVAILABLE_REASON = "Source record is unavailable. Use the last known state and escalate if needed.";
 
 function asString(value: unknown): string | null {
@@ -327,11 +324,7 @@ export function useCardData(zendeskTicketId: string) {
     try {
       const response = await fetch(
         `${API_BASE}/api/v1/card/${zendeskTicketId}`,
-        {
-          headers: {
-            "x-tenant-id": TENANT_ID,
-          },
-        }
+        { headers: authHeaders() }
       );
 
       if (!response.ok) {

@@ -11,8 +11,11 @@
 import { FastifyInstance } from "fastify";
 import { query } from "../db/pool";
 import { computeFreshness } from "../services/freshness";
+import { requireAuth } from "../middleware/auth";
 
 export async function cardRoutes(app: FastifyInstance): Promise<void> {
+  app.addHook("onRequest", requireAuth("agent"));
+
   /**
    * GET /api/v1/card/:zendesk_ticket_id
    * Returns card state for the given Zendesk ticket.
@@ -22,11 +25,7 @@ export async function cardRoutes(app: FastifyInstance): Promise<void> {
     "/:zendesk_ticket_id",
     async (request, reply) => {
       const { zendesk_ticket_id } = request.params;
-      const tenantId = request.headers["x-tenant-id"] as string;
-
-      if (!tenantId) {
-        return reply.status(401).send({ error: "x-tenant-id header required" });
-      }
+      const { tenantId } = request.auth;
 
       // Fetch card state from denormalized read model
       const cardResult = await query<CardStateRow>(

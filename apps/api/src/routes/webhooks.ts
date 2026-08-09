@@ -1,34 +1,41 @@
 /**
- * @iisl/api — Webhook Ingestion Routes
- * VALIDATION: [STATIC-CONSISTENT]
+ * @support-overlay/api — Webhook ingestion
  *
- * POST /webhooks/zendesk
- * POST /webhooks/stripe
- * POST /webhooks/shopify
+ *   POST /webhooks/zendesk
+ *   POST /webhooks/stripe
+ *   POST /webhooks/shopify
  *
- * All webhooks: store inbound_events with dedupe, verify signature,
- * route to appropriate handler.
+ * Signatures are verified over the RAW request body. Previously they were
+ * computed over JSON.stringify(request.body) — the re-serialized parse — which
+ * cannot reproduce the bytes any provider signed, so verification could never
+ * succeed against real Zendesk, Stripe, or Shopify traffic.
  *
- * Idempotency: UNIQUE (tenant_id, source_system, external_event_id)
- * Safe replay: re-processing a PROCESSED event is a no-op.
- * Out-of-order: uses source_event_at when present; received_at as fallback.
+ * Secrets are per-tenant, read from tenant_integrations.webhook_secret. There is
+ * no hardcoded fallback: an unconfigured integration fails verification rather
+ * than silently trusting a default that is published in this repository.
  *
- * Spec reference: Section 4.1, Section 7.1 (Zendesk merge/delete coverage)
+ * Tenancy comes from the webhook credential, not from a request header.
+ *
+ * Idempotency: UNIQUE (tenant_id, source_system, external_event_id).
+ * Ordering: uses source_event_at when present, received_at otherwise.
  */
 import { FastifyInstance, FastifyRequest } from "fastify";
-import { createHmac, timingSafeEqual } from "crypto";
-import { createHash } from "crypto";
+import { createHmac, timingSafeEqual, createHash } from "crypto";
 import { query, withTransaction } from "../db/pool";
 import { writeAuditEventTx, AuditEventType } from "../services/audit";
+import { requireAuth } from "../middleware/auth";
 import { ActorType } from "@iisl/shared";
 
+/** Stripe's recommended tolerance for replayed timestamps. */
+const STRIPE_TIMESTAMP_TOLERANCE_SECONDS = 300;
+
 export async function webhookRoutes(app: FastifyInstance): Promise<void> {
+  app.addHook("onRequest", requireAuth("webhook"));
   // Zendesk webhook
   app.post<{ Body: Record<string, unknown> }>(
     "/zendesk",
     async (request, reply) => {
-      const tenantId = request.headers["x-tenant-id"] as string;
-      if (!tenantId) return reply.status(401).send({ error: "x-tenant-id required" });
+      const { tenantId } = request.auth;
 
       const signatureValid = await verifyZendeskSignature(request, tenantId);
       const externalEventId =
@@ -55,8 +62,7 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: Record<string, unknown> }>(
     "/stripe",
     async (request, reply) => {
-      const tenantId = request.headers["x-tenant-id"] as string;
-      if (!tenantId) return reply.status(401).send({ error: "x-tenant-id required" });
+      const { tenantId } = request.auth;
 
       const signatureValid = await verifyStripeSignature(request, tenantId);
       const externalEventId = request.body?.id as string;
@@ -84,8 +90,7 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: Record<string, unknown> }>(
     "/shopify",
     async (request, reply) => {
-      const tenantId = request.headers["x-tenant-id"] as string;
-      if (!tenantId) return reply.status(401).send({ error: "x-tenant-id required" });
+      const { tenantId } = request.auth;
 
       const signatureValid = await verifyShopifySignature(request, tenantId);
       const externalEventId =
@@ -117,8 +122,7 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
       payload: Record<string, unknown>;
     };
   }>("/fixture", async (request, reply) => {
-    const tenantId = request.headers["x-tenant-id"] as string;
-    if (!tenantId) return reply.status(401).send({ error: "x-tenant-id required" });
+    const { tenantId } = request.auth;
 
     const { source_system, event_type, payload } = request.body;
     const externalEventId = `fixture_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -235,7 +239,7 @@ import { PoolClient } from "pg";
 async function routeEvent(
   client: PoolClient,
   input: IngestInput,
-  inboundEventId: string
+  _inboundEventId: string
 ): Promise<void> {
   const { sourceSystem, sourceEventType, payload, tenantId } = input;
 
@@ -361,6 +365,87 @@ async function handleTicketUpdated(
       });
     }
   }
+
+  // A ticket coming back from solved/closed is a reopen.
+  const status = String(ticket.status ?? "").toLowerCase();
+  const previousStatus = String(
+    (ticket.previous_status as string) ?? (ticket.via_followup_source_id ? "solved" : "")
+  ).toLowerCase();
+
+  if (
+    (status === "open" || status === "pending") &&
+    (previousStatus === "solved" || previousStatus === "closed")
+  ) {
+    await recordReopen(client, tenantId, ticketId);
+  }
+}
+
+/**
+ * Record a reopen and derive an abuse signal from the trailing count.
+ *
+ * risk_signals had no writer at all, so computeAbuseSeverity always returned
+ * NONE and the abuse rules in the policy engine were unreachable. Repeat
+ * reopens are the one signal this system can observe first-hand.
+ *
+ * Severity is deliberately about the pattern, not the person; the policy engine
+ * turns it into "additional review required", never an accusation.
+ */
+async function recordReopen(
+  client: PoolClient,
+  tenantId: string,
+  ticketId: string
+): Promise<void> {
+  const issueResult = await client.query<{ issue_id: string }>(
+    `SELECT issue_id FROM issue_tickets
+      WHERE tenant_id = $1 AND zendesk_ticket_id = $2`,
+    [tenantId, ticketId]
+  );
+  if (issueResult.rows.length === 0) return;
+
+  const issueId = issueResult.rows[0].issue_id;
+
+  await client.query(
+    `INSERT INTO reopen_events (tenant_id, issue_id, reason, source)
+     VALUES ($1, $2, 'Ticket reopened in Zendesk', 'zendesk')`,
+    [tenantId, issueId]
+  );
+
+  const countResult = await client.query<{ count: string; gate: number }>(
+    `SELECT (SELECT count(*) FROM reopen_events
+              WHERE tenant_id = $1 AND issue_id = $2
+                AND created_at > now() - interval '30 days') AS count,
+            (SELECT reopen_gate_count FROM tenant_config WHERE tenant_id = $1) AS gate`,
+    [tenantId, issueId]
+  );
+
+  const reopens = parseInt(countResult.rows[0]?.count ?? "0", 10);
+  const gate = countResult.rows[0]?.gate ?? 3;
+
+  const severity =
+    reopens >= gate ? "HIGH" : reopens >= Math.ceil(gate / 2) ? "MEDIUM" : "LOW";
+
+  await client.query(
+    `INSERT INTO risk_signals (tenant_id, issue_id, signal_type, signal_data, severity, source)
+     VALUES ($1, $2, 'repeat_reopen', $3, $4, 'zendesk_webhook')`,
+    [
+      tenantId,
+      issueId,
+      JSON.stringify({ reopen_count_30d: reopens, reopen_gate_count: gate }),
+      severity,
+    ]
+  );
+
+  await writeAuditEventTx(client, {
+    tenantId,
+    issueId,
+    eventType: AuditEventType.INBOUND_EVENT_PROCESSED,
+    actorType: ActorType.WEBHOOK,
+    payload: {
+      signal: "repeat_reopen",
+      reopen_count_30d: reopens,
+      severity,
+    },
+  });
 }
 
 async function handleTicketDeleted(
@@ -463,98 +548,180 @@ async function routeShopifyEvent(
   }
 }
 
+/**
+ * Project a Stripe refund event onto the evidence row for the matching charge.
+ *
+ * This previously discarded the payload and left a comment saying evidence
+ * would be refreshed by a pull cycle that does not exist, so a refund
+ * completing in Stripe never reached the card.
+ */
 async function routeStripeEvent(
   client: PoolClient,
   tenantId: string,
   eventType: string | undefined,
   payload: Record<string, unknown>
 ): Promise<void> {
-  // Stripe refund events update evidence_normalized
-  if (eventType === "charge.refunded" || eventType === "refund.updated") {
-    // Evidence will be refreshed on next evidence pull cycle
-    // Log for audit trail
-    await writeAuditEventTx(client, {
-      tenantId,
-      eventType: "stripe_refund_event_received",
-      actorType: ActorType.WEBHOOK,
-      payload: { stripe_event_type: eventType },
-    });
+  if (eventType !== "charge.refunded" && eventType !== "refund.updated") {
+    return;
   }
+
+  const object = (payload.data as { object?: Record<string, unknown> } | undefined)
+    ?.object;
+  if (!object) return;
+
+  // A refund event carries the refund; a charge event carries the charge.
+  const isRefund = object.object === "refund";
+  const chargeId = String(isRefund ? object.charge ?? "" : object.id ?? "");
+  const refundId = isRefund ? String(object.id ?? "") : null;
+  const status = isRefund ? String(object.status ?? "") : "succeeded";
+  const amountCents = Number(
+    isRefund ? object.amount : object.amount_refunded
+  );
+
+  if (!chargeId) return;
+
+  const updated = await client.query<{ issue_id: string }>(
+    `UPDATE evidence_normalized
+        SET refund_status = $3,
+            refund_id = COALESCE($4, refund_id),
+            refund_amount_cents = COALESCE($5, refund_amount_cents),
+            fetched_at = now(),
+            updated_at = now()
+      WHERE tenant_id = $1 AND charge_id = $2
+      RETURNING issue_id`,
+    [
+      tenantId,
+      chargeId,
+      ["succeeded", "pending", "failed"].includes(status) ? status : "pending",
+      refundId,
+      Number.isFinite(amountCents) ? amountCents : null,
+    ]
+  );
+
+  await writeAuditEventTx(client, {
+    tenantId,
+    issueId: updated.rows[0]?.issue_id,
+    eventType: AuditEventType.EVIDENCE_FETCHED,
+    actorType: ActorType.WEBHOOK,
+    payload: {
+      stripe_event_type: eventType,
+      charge_id: chargeId,
+      refund_id: refundId,
+      refund_status: status,
+      evidence_rows_updated: updated.rows.length,
+    },
+  });
 }
 
 // ─── Signature verification ───────────────────────────────────────────────────
+
+/**
+ * Per-tenant signing secret. Returns null when the integration is not
+ * configured — callers must treat that as verification failure, never as a
+ * reason to skip the check.
+ */
+async function webhookSecretFor(
+  tenantId: string,
+  sourceSystem: string
+): Promise<string | null> {
+  const result = await query<{ webhook_secret: string | null }>(
+    `SELECT webhook_secret FROM tenant_integrations
+      WHERE tenant_id = $1 AND source_system = $2 AND is_active = true
+      LIMIT 1`,
+    [tenantId, sourceSystem]
+  );
+  return result.rows[0]?.webhook_secret ?? null;
+}
+
+/** Constant-time compare of two same-encoding digests. */
+function safeEqual(a: Buffer, b: Buffer): boolean {
+  if (a.length !== b.length || a.length === 0) return false;
+  return timingSafeEqual(a, b);
+}
+
+/**
+ * The exact bytes the provider signed. Fastify's JSON parser is configured in
+ * server.ts to retain them; without this, the HMAC is computed over a
+ * re-serialization and never matches.
+ */
+function rawBodyOf(request: FastifyRequest): Buffer | null {
+  const raw = (request as FastifyRequest & { rawBody?: Buffer }).rawBody;
+  return Buffer.isBuffer(raw) ? raw : null;
+}
 
 async function verifyZendeskSignature(
   request: FastifyRequest,
   tenantId: string
 ): Promise<boolean> {
-  const secret = process.env.ZENDESK_WEBHOOK_SECRET ?? "dev_zendesk_webhook_secret";
-  const signature = request.headers["x-zendesk-webhook-signature"] as string;
-  if (!signature) return process.env.NODE_ENV === "development";
+  const signature = request.headers["x-zendesk-webhook-signature"];
+  const timestamp = request.headers["x-zendesk-webhook-signature-timestamp"];
+  const raw = rawBodyOf(request);
+  if (typeof signature !== "string" || !raw) return false;
 
-  const expected = createHmac("sha256", secret)
-    .update(JSON.stringify(request.body))
-    .digest("hex");
+  const secret = await webhookSecretFor(tenantId, "zendesk");
+  if (!secret) return false;
 
-  try {
-    return timingSafeEqual(
-      Buffer.from(signature, "hex"),
-      Buffer.from(expected, "hex")
-    );
-  } catch {
-    return false;
-  }
+  // Zendesk signs timestamp + body, base64-encoded.
+  const signed = Buffer.concat([
+    Buffer.from(typeof timestamp === "string" ? timestamp : "", "utf8"),
+    raw,
+  ]);
+  const expected = createHmac("sha256", secret).update(signed).digest("base64");
+
+  return safeEqual(Buffer.from(signature, "utf8"), Buffer.from(expected, "utf8"));
 }
 
 async function verifyStripeSignature(
   request: FastifyRequest,
   tenantId: string
 ): Promise<boolean> {
-  const secret = process.env.STRIPE_WEBHOOK_SECRET ?? "dev_stripe_webhook_secret";
-  const sigHeader = request.headers["stripe-signature"] as string;
-  if (!sigHeader) return process.env.NODE_ENV === "development";
+  const sigHeader = request.headers["stripe-signature"];
+  const raw = rawBodyOf(request);
+  if (typeof sigHeader !== "string" || !raw) return false;
 
-  // Stripe uses timestamp + signature scheme
-  const parts = Object.fromEntries(
-    sigHeader.split(",").map((p) => p.split("=") as [string, string])
-  );
-  const timestamp = parts["t"];
-  const sig = parts["v1"];
+  const secret = await webhookSecretFor(tenantId, "stripe");
+  if (!secret) return false;
 
-  if (!timestamp || !sig) return false;
+  const parts = new Map<string, string>();
+  for (const segment of sigHeader.split(",")) {
+    const [key, value] = segment.split("=");
+    if (key && value) parts.set(key.trim(), value.trim());
+  }
 
-  const payload = `${timestamp}.${JSON.stringify(request.body)}`;
-  const expected = createHmac("sha256", secret)
-    .update(payload)
-    .digest("hex");
+  const timestamp = parts.get("t");
+  const signature = parts.get("v1");
+  if (!timestamp || !signature) return false;
 
-  try {
-    return timingSafeEqual(
-      Buffer.from(sig, "hex"),
-      Buffer.from(expected, "hex")
-    );
-  } catch {
+  // Reject replays outside the tolerance window. Without this, a captured
+  // request stays valid forever.
+  const age = Math.abs(Date.now() / 1000 - Number(timestamp));
+  if (!Number.isFinite(age) || age > STRIPE_TIMESTAMP_TOLERANCE_SECONDS) {
     return false;
   }
+
+  const signed = Buffer.concat([
+    Buffer.from(`${timestamp}.`, "utf8"),
+    raw,
+  ]);
+  const expected = createHmac("sha256", secret).update(signed).digest("hex");
+
+  return safeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"));
 }
 
 async function verifyShopifySignature(
   request: FastifyRequest,
   tenantId: string
 ): Promise<boolean> {
-  const secret = process.env.SHOPIFY_WEBHOOK_SECRET ?? "dev_shopify_webhook_secret";
-  const hmac = request.headers["x-shopify-hmac-sha256"] as string;
-  if (!hmac) return process.env.NODE_ENV === "development";
+  const hmac = request.headers["x-shopify-hmac-sha256"];
+  const raw = rawBodyOf(request);
+  if (typeof hmac !== "string" || !raw) return false;
 
-  const expected = createHmac("sha256", secret)
-    .update(JSON.stringify(request.body))
-    .digest("base64");
+  const secret = await webhookSecretFor(tenantId, "shopify");
+  if (!secret) return false;
 
-  try {
-    return timingSafeEqual(Buffer.from(hmac), Buffer.from(expected));
-  } catch {
-    return false;
-  }
+  const expected = createHmac("sha256", secret).update(raw).digest("base64");
+
+  return safeEqual(Buffer.from(hmac, "utf8"), Buffer.from(expected, "utf8"));
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

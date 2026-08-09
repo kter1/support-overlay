@@ -6,9 +6,10 @@
     "dev": "ts-node-dev --respawn --transpile-only --project tsconfig.json src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "migrate": "node -r ts-node/register src/db/migrate.ts",
-    "seed": "node -r ts-node/register src/db/seed.ts",
-    "test": "vitest run"
+    "migrate": "ts-node -P ../../tsconfig.base.json ../../scripts/migrate.ts",
+    "test": "vitest run",
+    "dev:worker": "ts-node-dev --respawn --transpile-only --project tsconfig.json src/worker.ts",
+    "start:worker": "node dist/worker.js"
   },
   "dependencies": {
     "@iisl/shared": "*",
@@ -19,7 +20,8 @@
     "uuid": "^9.0.0",
     "zod": "^3.22.4",
     "pino": "^8.18.0",
-    "crypto": "^1.0.1"
+    "crypto": "^1.0.1",
+    "@iisl/connectors": "*"
   },
   "devDependencies": {
     "@types/pg": "^8.11.2",

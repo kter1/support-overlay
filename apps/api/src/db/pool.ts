@@ -1,18 +1,37 @@
 /**
- * @iisl/api — Database Connection Pool
- * VALIDATION: [COMPILE-PENDING] — requires pg package and DATABASE_URL env
+ * @support-overlay/api — Database access
+ *
+ * The pool is created lazily on first use rather than at import time, so that
+ * modules which merely import a query helper can be unit-tested without a live
+ * database. Tests call setDriver() to point the same helpers at an in-process
+ * Postgres (see apps/api/test/helpers/db.ts).
  */
 import { Pool, PoolClient, QueryResult, QueryResultRow } from "pg";
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL environment variable is required");
+/**
+ * The subset of node-postgres this codebase actually uses. Anything that can
+ * satisfy this can back the query helpers.
+ */
+export interface DbClient {
+  query<T extends QueryResultRow = QueryResultRow>(
+    sql: string,
+    params?: unknown[]
+  ): Promise<QueryResult<T>>;
 }
+
+export interface DbDriver extends DbClient {
+  /** Check out a dedicated connection for a transaction. */
+  connect(): Promise<PoolClient>;
+  end(): Promise<void>;
+}
+
+let driver: DbDriver | null = null;
 
 function normalizeDatabaseUrl(raw: string): string {
   try {
     const parsed = new URL(raw);
-    // On some hosts, localhost resolves to ::1 and can hit a different local Postgres.
-    // Use IPv4 loopback to target Docker port mapping consistently.
+    // On some hosts localhost resolves to ::1 and can reach a different local
+    // Postgres than the one Docker published on IPv4.
     if (parsed.hostname === "localhost") {
       parsed.hostname = "127.0.0.1";
       return parsed.toString();
@@ -23,39 +42,60 @@ function normalizeDatabaseUrl(raw: string): string {
   return raw;
 }
 
-export const pool = new Pool({
-  connectionString: normalizeDatabaseUrl(process.env.DATABASE_URL),
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
-});
+function createPool(): DbDriver {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    throw new Error("DATABASE_URL environment variable is required");
+  }
 
-pool.on("error", (err) => {
-  console.error("Unexpected PG pool error", err);
-});
+  const pool = new Pool({
+    connectionString: normalizeDatabaseUrl(url),
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 5000,
+  });
 
-/**
- * Execute a query with optional parameters.
- * Returns typed rows.
- */
+  pool.on("error", (err) => {
+    console.error("Unexpected PG pool error", err);
+  });
+
+  return pool as unknown as DbDriver;
+}
+
+/** Replace the backing driver. Returns the previous one so tests can restore it. */
+export function setDriver(next: DbDriver | null): DbDriver | null {
+  const previous = driver;
+  driver = next;
+  return previous;
+}
+
+export function getDriver(): DbDriver {
+  if (!driver) {
+    driver = createPool();
+  }
+  return driver;
+}
+
+/** Execute a query with optional parameters. */
 export async function query<T extends QueryResultRow = QueryResultRow>(
   sql: string,
   params?: unknown[]
 ): Promise<QueryResult<T>> {
-  return pool.query<T>(sql, params);
+  return getDriver().query<T>(sql, params);
 }
 
 /**
- * Execute a function within a transaction.
- * Rolls back automatically on error.
+ * Execute a function within a transaction. Rolls back on error.
  *
- * IMPORTANT: All state mutations that must be atomic (e.g. approval status
- * transition + action_executions creation) must use this function.
+ * Every mutation that must be atomic — approval status transition plus
+ * action_executions creation, effect ledger plus outbox status — must run
+ * through this, and must use the supplied client rather than the module-level
+ * query(), or the write escapes the transaction.
  */
 export async function withTransaction<T>(
   fn: (client: PoolClient) => Promise<T>
 ): Promise<T> {
-  const client = await pool.connect();
+  const client = await getDriver().connect();
   try {
     await client.query("BEGIN");
     const result = await fn(client);
@@ -70,11 +110,11 @@ export async function withTransaction<T>(
 }
 
 /**
- * Execute a query with lock_version optimistic concurrency check.
- * Throws ConcurrencyConflictError if 0 rows were updated.
+ * Execute a query with a lock_version optimistic concurrency check.
+ * Throws ConcurrencyConflictError if no rows were updated.
  */
 export async function updateWithLockVersion(
-  client: PoolClient,
+  client: DbClient,
   table: string,
   id: string,
   currentLockVersion: number,

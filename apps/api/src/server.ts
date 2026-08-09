@@ -1,9 +1,10 @@
 /**
- * @iisl/api — Fastify Server Entry Point
- * VALIDATION: [COMPILE-PENDING]
+ * @support-overlay/api — Fastify server entry point
  *
- * Starts the IISL API server with all routes registered.
  * Run: npm run dev (from apps/api)
+ *
+ * Every route group except /health is behind a bearer credential that carries
+ * its own tenant; see middleware/auth.ts.
  */
 import Fastify from "fastify";
 import cors from "@fastify/cors";
@@ -31,6 +32,34 @@ server.register(cors, {
 });
 
 server.register(helmet, { contentSecurityPolicy: false });
+
+// ─── Body parsing ─────────────────────────────────────────────────────────────
+
+/**
+ * Keep the raw bytes alongside the parsed JSON. Webhook signatures are computed
+ * over exactly what the provider sent; re-serializing the parsed object
+ * produces different bytes and the HMAC never matches.
+ */
+server.addContentTypeParser(
+  "application/json",
+  { parseAs: "buffer" },
+  (request, body: Buffer, done) => {
+    (request as typeof request & { rawBody?: Buffer }).rawBody = body;
+
+    if (body.length === 0) {
+      done(null, undefined);
+      return;
+    }
+
+    try {
+      done(null, JSON.parse(body.toString("utf8")));
+    } catch (err) {
+      const error = err as Error & { statusCode?: number };
+      error.statusCode = 400;
+      done(error, undefined);
+    }
+  }
+);
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 

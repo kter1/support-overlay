@@ -90,22 +90,10 @@ async function main() {
     await ensureMigrationsTable(pool);
     const applied = await getAppliedMigrations(pool);
 
-    const allFiles = fs
+    const files = fs
       .readdirSync(MIGRATIONS_DIR)
       .filter((f) => f.endsWith(".sql"))
       .sort();
-
-    // This repo ships a canonical "master schema" migration plus historical
-    // split files. For clean local bootstrap, run the canonical file only.
-    const files = allFiles.includes("000_schema_reference.sql")
-      ? ["000_schema_reference.sql"]
-      : allFiles;
-
-    if (allFiles.includes("000_schema_reference.sql") && allFiles.length > 1) {
-      console.log(
-        "Using canonical migration: 000_schema_reference.sql (skipping split historical files)"
-      );
-    }
 
     let pending = 0;
     for (const filename of files) {

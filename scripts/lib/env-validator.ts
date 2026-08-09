@@ -28,6 +28,13 @@ export const ENV_SPECS: EnvVarSpec[] = [
   // Auth
   { key: "OPERATOR_TOKEN",  description: "Bearer token for operator endpoints", example: "<operator_token>", required: true },
   { key: "AGENT_TOKEN",     description: "Bearer token for agent endpoints", example: "<agent_token>", required: true },
+  { key: "WEBHOOK_TOKEN",   description: "Bearer token for webhook ingestion endpoints", example: "<webhook_token>", required: true },
+  // Webhook signing secrets — optional locally (fixtures bypass signature
+  // checks), required to accept real provider traffic. Verification fails
+  // closed when a secret is absent; there is no shared default.
+  { key: "ZENDESK_WEBHOOK_SECRET", description: "Zendesk webhook signing secret", example: "<zendesk_webhook_secret>", required: false },
+  { key: "STRIPE_WEBHOOK_SECRET",  description: "Stripe webhook signing secret",  example: "<stripe_webhook_secret>",  required: false },
+  { key: "SHOPIFY_WEBHOOK_SECRET", description: "Shopify webhook signing secret", example: "<shopify_webhook_secret>", required: false },
   // Worker
   { key: "WORKER_POLL_INTERVAL_MS", description: "Outbox poll interval in ms", example: "2000", required: true },
   { key: "WORKER_MAX_ATTEMPTS",     description: "Max outbox retry attempts", example: "5", required: true },
@@ -37,6 +44,7 @@ export const ENV_SPECS: EnvVarSpec[] = [
   { key: "USE_SHOPIFY_SIMULATOR", description: "Use Shopify fixture simulator",  example: "true", required: true },
   // Frontend
   { key: "VITE_API_BASE_URL", description: "API base URL seen by sidebar", example: "http://localhost:3001", required: true },
+  { key: "VITE_AGENT_TOKEN", description: "Agent bearer token the sidebar sends (set to $AGENT_TOKEN)", example: "<agent_token>", required: true },
   { key: "SIDEBAR_PORT", description: "Sidebar dev server port", example: "5173", required: false },
   // Optional — validated only if present
   { key: "LOG_LEVEL",       description: "Log verbosity (info|debug|warn|error)", example: "info", required: false },

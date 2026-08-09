@@ -306,7 +306,7 @@ async function waitForPostgresReady() {
 
   while (Date.now() < deadline) {
     try {
-      const result = execSync(
+      execSync(
         `docker compose -f "${COMPOSE_FILE}" exec -T postgres pg_isready -U ${pgUser} -d ${pgDb}`,
         { stdio: "pipe", cwd: ROOT }
       );

@@ -12,9 +12,12 @@
 import { FastifyInstance } from "fastify";
 import { query } from "../db/pool";
 import { initiateAction } from "../services/actionService";
+import { requireAuth } from "../middleware/auth";
 import { ActionType } from "@iisl/shared";
 
 export async function actionsRoutes(app: FastifyInstance): Promise<void> {
+  app.addHook("onRequest", requireAuth("agent"));
+
   /**
    * POST /api/v1/actions
    * Initiate an agent action. Always runs policy evaluation first.
@@ -27,11 +30,8 @@ export async function actionsRoutes(app: FastifyInstance): Promise<void> {
       action_params: Record<string, unknown>;
     };
   }>("/", async (request, reply) => {
-    const tenantId = request.headers["x-tenant-id"] as string;
-    const agentId = request.headers["x-agent-id"] as string;
-
-    if (!tenantId) return reply.status(401).send({ error: "x-tenant-id required" });
-    if (!agentId) return reply.status(401).send({ error: "x-agent-id required" });
+    // Tenant and agent identity come from the credential, not the request.
+    const { tenantId, principalId: agentId } = request.auth;
 
     const { action_type, issue_id, idempotency_key, action_params } =
       request.body;
@@ -54,6 +54,9 @@ export async function actionsRoutes(app: FastifyInstance): Promise<void> {
 
       return reply.status(200).send({
         outcome: result.outcome,
+        // True when this key was already used and the original execution was
+        // returned rather than a second side effect being queued.
+        idempotent_replay: result.isReplay ?? false,
         action_execution_id: result.actionExecutionId ?? null,
         approval_request_id: result.approvalRequestId ?? null,
         policy_rule_id: result.policyRuleId,
@@ -75,9 +78,7 @@ export async function actionsRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { execution_id: string } }>(
     "/:execution_id",
     async (request, reply) => {
-      const tenantId = request.headers["x-tenant-id"] as string;
-      if (!tenantId) return reply.status(401).send({ error: "x-tenant-id required" });
-
+      const { tenantId } = request.auth;
       const { execution_id } = request.params;
 
       const result = await query<ExecutionRow>(

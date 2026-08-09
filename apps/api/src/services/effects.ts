@@ -35,6 +35,9 @@ export function buildEffectsForAction(
   const now = new Date().toISOString();
 
   switch (actionType) {
+    case ActionType.ISSUE_REFUND:
+      return buildIssueRefundEffects(executionId, params, now);
+
     case ActionType.CLOSE_CONFIRMED:
       return buildCloseConfirmedEffects(executionId, params, now);
 
@@ -64,6 +67,107 @@ export function buildEffectsForAction(
 }
 
 // ─── Action-specific effect builders ─────────────────────────────────────────
+
+/**
+ * Money movement. Two effects, ordered: refund first, then the ticket comment
+ * that tells the customer about it. The refund is OPERATOR_RETRY_ONLY, so if
+ * its outcome is ever uncertain the worker stops rather than re-sending.
+ *
+ * The effect key is what makes this safe end to end: it is the Stripe
+ * Idempotency-Key, it is stored in the refund's metadata, and it is the ledger
+ * dedupe key. A replay at any layer resolves to the same single refund.
+ */
+function buildIssueRefundEffects(
+  executionId: string,
+  params: Record<string, unknown>,
+  now: string
+): PlannedEffect[] {
+  const chargeId = params.stripe_charge_id as string;
+  const amountCents = params.refund_amount_cents as number;
+  const ticketId = params.zendesk_ticket_id as string | undefined;
+
+  if (!chargeId || typeof amountCents !== "number") {
+    throw new Error(
+      "issue_refund requires stripe_charge_id and refund_amount_cents"
+    );
+  }
+
+  const refundEffectKey = buildEffectKey(
+    executionId,
+    "stripe_refund_create",
+    `charge/${chargeId}`,
+    // Amount is part of the key so a corrected amount is a distinct effect
+    // rather than silently deduping against the original.
+    sha256(String(amountCents)).slice(0, 8)
+  );
+
+  const effects: PlannedEffect[] = [
+    {
+      targetSystem: SourceSystem.STRIPE,
+      payload: {
+        operation: "create_refund",
+        stripe_charge_id: chargeId,
+        refund_amount_cents: amountCents,
+        reason: (params.reason as string) ?? null,
+      },
+      idempotencyKey: refundEffectKey,
+      initialLedgerEntry: {
+        effect_type: "stripe_refund_create",
+        target_system: SourceSystem.STRIPE,
+        target_resource_id: `charge/${chargeId}`,
+        effect_key: refundEffectKey,
+        attempt_number: 1,
+        outcome_status: EffectOutcomeStatus.INTENDED,
+        provider_correlation_id: null,
+        intended_at: now,
+        sent_at: null,
+        confirmed_at: null,
+      },
+    },
+  ];
+
+  if (ticketId) {
+    const body =
+      (params.refund_comment as string) ??
+      `A refund of ${formatAmount(amountCents)} has been issued to your original payment method.`;
+    const commentHash = sha256(body).slice(0, 8);
+    const commentEffectKey = buildEffectKey(
+      executionId,
+      "zendesk_comment_post",
+      `ticket/${ticketId}`,
+      commentHash
+    );
+
+    effects.push({
+      targetSystem: SourceSystem.ZENDESK,
+      payload: {
+        operation: "post_comment",
+        zendesk_ticket_id: ticketId,
+        comment_body: body,
+        comment_hash: commentHash,
+      },
+      idempotencyKey: commentEffectKey,
+      initialLedgerEntry: {
+        effect_type: "zendesk_comment_post",
+        target_system: SourceSystem.ZENDESK,
+        target_resource_id: `ticket/${ticketId}`,
+        effect_key: commentEffectKey,
+        attempt_number: 1,
+        outcome_status: EffectOutcomeStatus.INTENDED,
+        provider_correlation_id: null,
+        intended_at: now,
+        sent_at: null,
+        confirmed_at: null,
+      },
+    });
+  }
+
+  return effects;
+}
+
+function formatAmount(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
+}
 
 function buildCloseConfirmedEffects(
   executionId: string,

@@ -19,21 +19,18 @@
  */
 import { PoolClient } from "pg";
 import { randomUUID } from "crypto";
-import { query, withTransaction, updateWithLockVersion } from "../db/pool";
+import { query, withTransaction } from "../db/pool";
 import { writeAuditEventTx, AuditEventType } from "./audit";
-import { evaluate, ACTION_RISK_TIERS } from "@iisl/policy";
+import { evaluate } from "@iisl/policy";
 import {
   PolicyOutcome,
   ActionType,
-  ExecutionStatus,
-  OutboxStatus,
   ActorType,
   DegradedState,
   AbuseSeverity,
   IssueState,
-  EffectOutcomeStatus,
 } from "@iisl/shared";
-import { buildEffectKey, buildEffectsForAction } from "./effects";
+import { buildEffectsForAction } from "./effects";
 import { computeFreshness } from "./freshness";
 
 export interface InitiateActionInput {
@@ -54,6 +51,8 @@ export interface InitiateActionResult {
   policyRuleId: string;
   denyReason?: string;
   unblockPath?: string;
+  /** True when the idempotency key matched an existing execution. */
+  isReplay?: boolean;
 }
 
 /**
@@ -63,14 +62,41 @@ export interface InitiateActionResult {
 export async function initiateAction(
   input: InitiateActionInput
 ): Promise<InitiateActionResult> {
+  // ── 0. Idempotency ───────────────────────────────────────────────────────
+  // A replayed submit (double-click, client retry) must resolve to the original
+  // execution rather than queueing a second side effect or 500-ing on the
+  // unique constraint.
+  const replay = await findExecutionByIdempotencyKey(
+    input.tenantId,
+    input.idempotencyKey
+  );
+
+  if (replay) {
+    return {
+      outcome: PolicyOutcome.ALLOW,
+      actionExecutionId: replay.id,
+      policyRuleId: replay.policy_rule_id ?? "rule_idempotent_replay",
+      isReplay: true,
+    };
+  }
+
   // ── 1. Load issue + tenant config ────────────────────────────────────────
+  // Columns are listed explicitly: `i.*, tc.*` collided on id/tenant_id, and
+  // node-postgres keeps the last column of a given name, so issue.id was
+  // actually tenant_config.id.
   const issueRow = await query<IssueRow>(
-    `SELECT i.*, tc.*, ti_z.credentials as zd_creds
-     FROM issues i
-     JOIN tenant_config tc ON tc.tenant_id = i.tenant_id
-     LEFT JOIN tenant_integrations ti_z
-       ON ti_z.tenant_id = i.tenant_id AND ti_z.source_system = 'zendesk'
-     WHERE i.id = $1 AND i.tenant_id = $2`,
+    `SELECT i.id, i.tenant_id, i.state, i.lock_version,
+            tc.evidence_freshness_seconds,
+            tc.refund_amount_tolerance_pct,
+            tc.reopen_gate_count,
+            tc.manager_approval_threshold_cents,
+            tc.manager_approval_group_id,
+            tc.approvals_enabled,
+            tc.macro_prefix_resolved,
+            tc.macro_prefix_pending
+       FROM issues i
+       JOIN tenant_config tc ON tc.tenant_id = i.tenant_id
+      WHERE i.id = $1 AND i.tenant_id = $2`,
     [input.issueId, input.tenantId]
   );
 
@@ -184,13 +210,55 @@ export async function initiateAction(
   }
 
   // PolicyOutcome.ALLOW → create action_executions + outbox atomically
-  const executionId = await createActionExecution(input, issue, policyResult);
+  try {
+    const executionId = await createActionExecution(input, issue, policyResult);
 
-  return {
-    outcome: PolicyOutcome.ALLOW,
-    actionExecutionId: executionId,
-    policyRuleId: policyResult.policyRuleId,
-  };
+    return {
+      outcome: PolicyOutcome.ALLOW,
+      actionExecutionId: executionId,
+      policyRuleId: policyResult.policyRuleId,
+    };
+  } catch (err) {
+    // Two concurrent submits with the same key: the loser resolves to the
+    // winner's execution instead of surfacing a constraint violation.
+    if (isUniqueViolation(err)) {
+      const existing = await findExecutionByIdempotencyKey(
+        input.tenantId,
+        input.idempotencyKey
+      );
+      if (existing) {
+        return {
+          outcome: PolicyOutcome.ALLOW,
+          actionExecutionId: existing.id,
+          policyRuleId: existing.policy_rule_id ?? policyResult.policyRuleId,
+          isReplay: true,
+        };
+      }
+    }
+    throw err;
+  }
+}
+
+/** Postgres unique_violation. */
+function isUniqueViolation(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { code?: string }).code === "23505"
+  );
+}
+
+async function findExecutionByIdempotencyKey(
+  tenantId: string,
+  idempotencyKey: string
+): Promise<{ id: string; policy_rule_id: string | null } | null> {
+  const result = await query<{ id: string; policy_rule_id: string | null }>(
+    `SELECT id, policy_rule_id FROM action_executions
+      WHERE tenant_id = $1 AND idempotency_key = $2
+      LIMIT 1`,
+    [tenantId, idempotencyKey]
+  );
+  return result.rows[0] ?? null;
 }
 
 // ─── Create action_executions + outbox_messages atomically ───────────────────
@@ -199,14 +267,18 @@ async function createActionExecution(
   input: InitiateActionInput,
   issue: IssueRow,
   policyResult: { policyRuleId: string; policyVersion: string },
-  approvalRequestId?: string
+  approvalRequestId?: string,
+  /**
+   * Existing transaction to join. Callers already inside a transaction must
+   * pass their client — opening a nested withTransaction() would check out a
+   * second pooled connection, so the approval update and the execution insert
+   * would land in separate transactions and could not roll back together.
+   */
+  existingClient?: PoolClient
 ): Promise<string> {
-  return withTransaction(async (client) => {
+  const run = async (client: PoolClient): Promise<string> => {
     const executionId = randomUUID();
-    const plannedState = deriveTargetState(
-      input.actionType,
-      issue.state as IssueState
-    );
+    const plannedState = deriveTargetState(input.actionType);
 
     // Insert action_executions row (PENDING)
     // planned_state is stored here — NOT written to state_transitions
@@ -272,7 +344,9 @@ async function createActionExecution(
     });
 
     return executionId;
-  });
+  };
+
+  return existingClient ? run(existingClient) : withTransaction(run);
 }
 
 // ─── Create approval_requests row ────────────────────────────────────────────
@@ -330,7 +404,8 @@ async function createApprovalRequest(
 export async function completeApprovalAndEnqueue(
   tenantId: string,
   approvalId: string,
-  managerId: string
+  managerId: string,
+  notes?: string
 ): Promise<string> {
   return withTransaction(async (client) => {
     // Load and lock approval request
@@ -363,11 +438,26 @@ export async function completeApprovalAndEnqueue(
     // Mark approval as APPROVED
     await client.query(
       `UPDATE approval_requests
-       SET status = 'APPROVED', approved_at = now(),
-           assigned_manager_id = $2
-       WHERE id = $1`,
-      [approvalId, managerId]
+          SET status = 'APPROVED',
+              approved_at = now(),
+              assigned_manager_id = $2,
+              reason = COALESCE($3, reason),
+              updated_at = now()
+        WHERE id = $1`,
+      [approvalId, managerId, notes ?? null]
     );
+
+    // The issue's real current state drives planned_state. Passing a hardcoded
+    // OPEN here meant planned_state was derived from the wrong base, and the
+    // later state transition would fail its from-state guard.
+    const issueResult = await client.query<{ state: IssueState }>(
+      `SELECT state FROM issues WHERE id = $1 AND tenant_id = $2`,
+      [approval.issue_id, tenantId]
+    );
+
+    if (issueResult.rows.length === 0) {
+      throw new Error(`Issue ${approval.issue_id} not found`);
+    }
 
     // Create action_executions row (atomically with approval status change)
     const executionId = await createActionExecution(
@@ -379,10 +469,10 @@ export async function completeApprovalAndEnqueue(
         idempotencyKey: `approval_${approvalId}`,
         actionParams: approval.action_payload,
       },
-      // We pass minimal issue data — the function re-queries as needed
-      { state: IssueState.OPEN } as IssueRow,
+      { state: issueResult.rows[0].state } as IssueRow,
       { policyRuleId: approval.approval_policy_code, policyVersion: "approval_grant" },
-      approvalId
+      approvalId,
+      client
     );
 
     // Link approval to execution
@@ -397,7 +487,7 @@ export async function completeApprovalAndEnqueue(
       tenantId,
       issueId: approval.issue_id,
       eventType: AuditEventType.APPROVAL_GRANTED,
-      actorType: ActorType.AGENT,
+      actorType: ActorType.OPERATOR,
       actorId: managerId,
       payload: {
         approval_request_id: approvalId,
@@ -454,10 +544,7 @@ export async function applyStateTransition(
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function deriveTargetState(
-  actionType: ActionType,
-  currentState: IssueState
-): IssueState | null {
+function deriveTargetState(actionType: ActionType): IssueState | null {
   const transitions: Partial<Record<ActionType, IssueState>> = {
     [ActionType.CLOSE_CONFIRMED]: IssueState.RESOLVED,
     [ActionType.ESCALATE_MISSING]: IssueState.BLOCKED,

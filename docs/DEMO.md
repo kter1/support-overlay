@@ -1,4 +1,4 @@
-# IISL Phase 1 — Demo Walkthrough
+# Demo Walkthrough
 
 ## Prerequisites
 
@@ -6,31 +6,26 @@
 - Node.js 18+ (`node --version`)
 - npm 9+ (`npm --version`)
 
-## Setup (one-time)
+## Setup
+
+Follow the Quick Start in the README to export the required environment
+variables, then:
 
 ```bash
-# 1. Install dependencies
-npm install
-
-# 2. Start Postgres
-docker compose -f infra/docker-compose.yml up -d
-
-# 3. Wait for Postgres to be ready (~5s), then:
-npm run db:migrate
-npm run db:seed
-
-# 4. Start all services
-npm run dev
+npm run demo:start
 ```
 
 Services:
 - API: http://localhost:3001
 - Sidebar: http://localhost:5173
 
-Before running operator API commands in this guide:
+Every endpoint is authenticated and derives its tenant from the token, so the
+`curl` commands below need the tokens you exported. There is no `x-tenant-id`
+header any more — supplying one has no effect.
 
 ```bash
-export OPERATOR_TOKEN=<operator_token>
+export OPERATOR_TOKEN=<operator_token>   # /ops endpoints
+export AGENT_TOKEN=<agent_token>         # card, actions, approvals
 ```
 
 ---
@@ -52,11 +47,13 @@ export OPERATOR_TOKEN=<operator_token>
    - CTA replaced by "Action submitted — processing"
    - Worker picks up outbox message within 2 seconds
    - Card auto-refreshes: state → **Resolved**, action complete
-6. Verify audit trail:
+6. Verify the audit trail:
    ```bash
    curl http://localhost:3001/ops/audit/10000000-0000-0000-0000-000000000001 \
      -H "Authorization: Bearer $OPERATOR_TOKEN"
    ```
+   Every policy evaluation appears with its `policy_rule_id` and
+   `policy_version`.
 
 **Expected behavior:** End-to-end in <5 seconds. Zero extra interactions.
 
@@ -84,31 +81,30 @@ export OPERATOR_TOKEN=<operator_token>
 
 ---
 
-## Scenario 3: Retry + Unknown Outcome Reconciliation
+## Scenario 3: Awaiting operator reconciliation
 
-**What this shows:** SENT_UNCERTAIN state, worker retry, operator reconcile path.
+**What this shows:** an execution whose outcome was never confirmed, parked for
+a human rather than retried.
 
-1. Select **Scenario 3: Retry + Unknown Outcome** (Ticket #10003)
-2. Observe the Resolution Card:
-   - Issue state: **Action In Progress**
-   - Execution panel: shows retrying state
-   - The seeded data has 2 SENT_UNCERTAIN attempts already recorded in effects ledger
-3. Watch the worker (in your terminal):
-   ```
-   [worker] Processing <id> | action=close_confirmed | attempt=3
-   [worker:zendesk-sim] ✓ Ticket 10003 status → solved
-   ```
-4. Card auto-refreshes: state → **Resolved**
+> This is **seeded state** representing a past incident — it is not a live
+> demonstration of uncertainty detection. To see the worker actually produce
+> `SENT_UNCERTAIN` from a real timeout, run
+> `npx vitest run apps/api/test/exactly-once.test.ts`, which drives timeouts
+> and provider rejections through the adapter and asserts on the ledger.
 
-**Demonstrate reconciliation manually:**
+1. Select **Scenario 3** (Ticket #10003)
+2. Observe the Resolution Card: the execution is `FAILED_TERMINAL` and its
+   outbox row is `BLOCKED_OPERATOR` with `effect_settled_at` set, so the worker
+   will never re-dispatch it.
+3. Inspect the effects ledger — two `SENT_UNCERTAIN` attempts are recorded and
+   neither was followed by a re-send.
 
-For the scenario where worker reaches FAILED_TERMINAL (simulate by stopping the worker mid-retry):
+**Reconcile it:**
 
 ```bash
 # Get the execution ID
 curl http://localhost:3001/ops/action-executions \
-  -H "Authorization: Bearer $OPERATOR_TOKEN" \
-  -H "x-tenant-id: 00000000-0000-0000-0000-000000000001"
+  -H "Authorization: Bearer $OPERATOR_TOKEN"
 
 # Reconcile with CONFIRMED_OCCURRED (effect did happen)
 curl -X PATCH http://localhost:3001/ops/action-executions/<execution-id>/reconcile \
@@ -121,10 +117,13 @@ curl -X PATCH http://localhost:3001/ops/action-executions/<execution-id>/reconci
   }'
 ```
 
-**Key spec behavior demonstrated:**
-- `state_transitions` NOT written on FAILED_TERMINAL (spec Finding 3)
-- `reconciled_at`, `reconciled_by`, `reconciliation_outcome` columns (spec Finding 7)
-- Status stays `FAILED_TERMINAL` — reconciliation is metadata, not status change
+**Behaviour demonstrated:**
+- No `state_transitions` row is written on `FAILED_TERMINAL`
+- `reconciled_at`, `reconciled_by`, `reconciliation_outcome`,
+  `investigation_notes` are recorded on the execution
+- Status stays `FAILED_TERMINAL` — reconciliation is metadata, never a status
+  change, so the record of what happened cannot be rewritten
+- `reconciled_by` is the authenticated operator, not a value from the request
 
 ---
 
@@ -150,16 +149,15 @@ curl -X PATCH http://localhost:3001/ops/tenants/00000000-0000-0000-0000-00000000
 5. Approve as manager:
    ```bash
    # List pending approvals
-   curl http://localhost:3001/approvals \
-     -H "x-tenant-id: 00000000-0000-0000-0000-000000000001" \
+   curl http://localhost:3001/api/v1/approvals \
      -H "Authorization: Bearer $OPERATOR_TOKEN"
 
-   # Approve (as manager)
-   curl -X POST http://localhost:3001/approvals/<approval-id>/approve \
-     -H "x-tenant-id: 00000000-0000-0000-0000-000000000001" \
+   # Grant it. The approving manager is the authenticated principal and must
+   # have a manager_grants entry — a manager_id in the body is ignored.
+   curl -X POST http://localhost:3001/api/v1/approvals/<approval-id>/grant \
      -H "Authorization: Bearer $OPERATOR_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"manager_id": "manager-demo-001", "notes": "Approved — verified customer account"}'
+     -d '{"notes": "Approved — verified customer account"}'
    ```
 6. Watch: action execution created atomically on approval, worker picks it up
 7. Card transitions to ESCALATED/RESOLVED
@@ -206,7 +204,7 @@ curl -X POST http://localhost:3001/ops/issues/<issue-id>/sync-zendesk \
 ### View observability metrics
 ```bash
 curl http://localhost:3001/metrics \
-  -H "x-tenant-id: 00000000-0000-0000-0000-000000000001"
+  -H "Authorization: Bearer $OPERATOR_TOKEN"
 ```
 
 ---
@@ -224,5 +222,15 @@ curl http://localhost:3001/metrics \
 - `npm run db:seed` can be run standalone after migrations
 
 **Worker not processing**
-- Worker starts as part of `npm run dev` — check the terminal for `[worker]` log lines
-- Worker polls every 2 seconds; allow time for it to pick up messages
+- The worker runs as its own process from `apps/api/src/worker.ts`; `npm run dev`
+  starts it alongside the API. Check the terminal for `[worker]` log lines.
+- It polls every 2 seconds; allow time for it to pick up messages.
+- A `BLOCKED_OPERATOR` row is *meant* to sit there — it needs reconciliation,
+  not a retry.
+
+**401 Unauthorized**
+- Export `AGENT_TOKEN` / `OPERATOR_TOKEN` and pass them as
+  `Authorization: Bearer <token>`. Tenancy comes from the token; `x-tenant-id`
+  is no longer read.
+- Tokens are provisioned by `npm run db:seed` from the environment. If you
+  rotated a token, re-run the seed.
