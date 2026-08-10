@@ -234,12 +234,20 @@ export async function apiRequest<T>(
         ? undefined
         : (body as { error?: string } | null)?.error ?? describeError(response.status),
     };
-  } catch (err) {
+  } catch {
+    // `fetch` rejects with a bare "Failed to fetch" for every network-layer
+    // failure, and the browser deliberately withholds which one — a refused
+    // connection and a blocked cross-origin request are indistinguishable to
+    // the page. Since the message is useless on its own, replace it with the
+    // two things the reader can actually check.
     return {
       ok: false,
       status: 0,
       body: null,
-      error: err instanceof Error ? err.message : "Network error",
+      error:
+        `Could not reach the API at ${API_BASE}. ` +
+        "Check that it is running (its /health should answer), and that the " +
+        "address above matches the port it started on.",
     };
   }
 }

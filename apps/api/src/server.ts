@@ -20,6 +20,7 @@ import { metricsRoutes } from "./routes/metrics";
 import { correlationIdMiddleware } from "./middleware/correlationId";
 import { registerErrorHandling } from "./middleware/errors";
 import { query, getDriver } from "./db/pool";
+import { corsOriginRule } from "./middleware/cors";
 
 const server = Fastify({
   logger: {
@@ -44,33 +45,8 @@ const server = Fastify({
 
 // ─── Plugins ──────────────────────────────────────────────────────────────────
 
-/**
- * Allowed browser origins for the sidebar.
- *
- * Accepts a comma-separated list because a deployment usually has more than one
- * legitimate origin, and because `localhost` and `127.0.0.1` are *different*
- * origins to a browser — a single-value setting silently blocks whichever one
- * the developer happens to type, and the failure surfaces only as an
- * unexplained "Failed to fetch" in the panel.
- *
- * Installed in Zendesk this path is not used at all: ZAF `secure: true` requests
- * are proxied server-side, so they carry no browser origin. This exists for
- * local development and for any self-hosted sidebar.
- */
-function allowedOrigins(): string[] {
-  const configured = process.env.SIDEBAR_ORIGIN;
-  if (configured) {
-    return configured
-      .split(",")
-      .map((o) => o.trim())
-      .filter((o) => o.length > 0);
-  }
-  const port = process.env.SIDEBAR_PORT ?? "5173";
-  return [`http://localhost:${port}`, `http://127.0.0.1:${port}`];
-}
-
 server.register(cors, {
-  origin: allowedOrigins(),
+  origin: corsOriginRule(),
   credentials: true,
 });
 

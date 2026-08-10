@@ -245,9 +245,17 @@ function resolveSidebarPortConflicts() {
     );
   }
 
-  warn(`Sidebar port ${currentPort} is busy; switching to ${selectedPort}`);
+  // Say this loudly. Whatever holds the old port is almost always a previous
+  // run of this same stack, still serving a page that looks correct — so the
+  // reader opens the URL they remember, sees a stale sidebar talking to a
+  // backend that no longer matches it, and has no reason to suspect the port.
+  console.log(
+    `\n${c.yellow}${c.bold}⚠  Something is already serving on port ${currentPort}.${c.reset}\n` +
+      `   This run's sidebar will be at ${c.bold}http://localhost:${selectedPort}${c.reset} instead.\n` +
+      `   ${c.dim}If that is an earlier copy of this demo, stop it and rerun — otherwise\n` +
+      `   a stale page on ${currentPort} will keep loading and will not work.${c.reset}\n`
+  );
   process.env.SIDEBAR_PORT = String(selectedPort);
-  ok(`Using SIDEBAR_PORT=${selectedPort} for this run`);
 }
 
 function getPortListeners(port: number): string {
