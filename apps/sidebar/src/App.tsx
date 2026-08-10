@@ -23,6 +23,7 @@ const DEMO_TICKETS = [
   { id: "10001", label: "Happy path — refund confirmed", emoji: "✅" },
   { id: "10002", label: "Degraded — source unavailable", emoji: "⚠️" },
   { id: "10003", label: "Awaiting operator reconciliation", emoji: "🔄" },
+  { id: "10005", label: "Already refunded — duplicate risk", emoji: "🛑" },
 ];
 
 type LoadState =

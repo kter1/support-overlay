@@ -78,7 +78,8 @@ function validateEnvironment() {
     for (const e of errors) console.error(`  • ${e}`);
     fail(
       "Fix the above environment issues and retry",
-      "Export required environment variables, then rerun: npm run doctor"
+      "Add the missing values to .env in the repository root, then rerun.\n  " +
+      "Deleting .env regenerates it with working defaults."
     );
   }
   ok("All required env vars present");

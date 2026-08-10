@@ -344,3 +344,109 @@ VALUES
    'action_execution_retry', 'system', 'system',
    '{"action_execution_id":"30000000-0000-0000-0000-000000000001","attempt":2,"outcome_status":"SENT_UNCERTAIN"}',
    null, null);
+
+
+-- ─── Scenario 4: Already refunded — the duplicate-refund catch ────────────────
+--
+-- Two tickets, one customer, one order. Ticket 10004 was refunded in January.
+-- Ticket 10005 is the same customer writing back two weeks later because the
+-- money had not appeared in their bank yet — which is what refunds do for a
+-- week, and why this is the most common way a support team pays twice for one
+-- purchase.
+--
+-- The agent looking at 10005 has no reason to suspect anything: the ticket
+-- reads like an ordinary refund request, and its own evidence does not match
+-- (there is no charge id in the text). The card catches it from history alone.
+--
+-- Both issues carry extracted context, because history matches on the
+-- identifiers the extractor found — never on amount, since two $49.99 orders
+-- from one customer are not one purchase.
+
+-- Ticket 10004 — the original request, refunded.
+INSERT INTO issues (id, tenant_id, customer_id, customer_email, state, opened_at) VALUES
+  ('10000000-0000-0000-0000-000000000004',
+   '00000000-0000-0000-0000-000000000001',
+   'cust_repeat_004',
+   'dana@example.com',
+   'RESOLVED',
+   now() - interval '21 days');
+
+INSERT INTO issue_tickets (tenant_id, issue_id, zendesk_ticket_id, is_primary) VALUES
+  ('00000000-0000-0000-0000-000000000001',
+   '10000000-0000-0000-0000-000000000004',
+   '10004', true);
+
+INSERT INTO issue_context (
+  tenant_id, issue_id, extractor_version, payment_reference, order_reference,
+  claimed_amount_cents, claimed_currency, primary_ask, message_count, highlights
+) VALUES
+  ('00000000-0000-0000-0000-000000000001',
+   '10000000-0000-0000-0000-000000000004',
+   'extract_v1', 'ch_001', '1001', 4999, 'usd', 'refund_request', 2,
+   '[{"kind":"payment_reference","display":"ch_001","confidence":0.99,
+      "author_role":"customer","source_kind":"ticket_description",
+      "excerpt":"charge ch_001","rule":"stripe_charge"},
+     {"kind":"order_reference","display":"#1001","confidence":0.93,
+      "author_role":"customer","source_kind":"ticket_description",
+      "excerpt":"order #1001","rule":"order_labelled"},
+     {"kind":"money","display":"$49.99","confidence":0.97,
+      "author_role":"customer","source_kind":"ticket_description",
+      "excerpt":"$49.99","rule":"symbol_prefixed"},
+     {"kind":"ask","display":"Refund requested","confidence":0.80,
+      "author_role":"customer","source_kind":"ticket_description",
+      "excerpt":"refund","rule":"ask_refund"}]'::jsonb);
+
+INSERT INTO issue_card_state (
+  tenant_id, issue_id, zendesk_ticket_id, issue_state,
+  match_band, confidence_score, evidence_fetched_at, is_source_unavailable,
+  refund_status, refund_amount_cents, refund_currency, refund_id, evidence_summary
+) VALUES
+  ('00000000-0000-0000-0000-000000000001',
+   '10000000-0000-0000-0000-000000000004',
+   '10004', 'RESOLVED', 'HIGH', 0.94, now() - interval '21 days', false,
+   'succeeded', 4999, 'usd', 're_demo_004',
+   '{"stripeRefundStatus":"succeeded","stripeChargeAmount":4999,"shopifyOrderName":"#1001","refundAmount":4999,"currency":"usd"}');
+
+-- Ticket 10005 — same customer, same order, no charge id this time.
+INSERT INTO issues (id, tenant_id, customer_id, customer_email, state, opened_at) VALUES
+  ('10000000-0000-0000-0000-000000000005',
+   '00000000-0000-0000-0000-000000000001',
+   'cust_repeat_004',
+   'dana@example.com',
+   'OPEN',
+   now() - interval '2 hours');
+
+INSERT INTO issue_tickets (tenant_id, issue_id, zendesk_ticket_id, is_primary) VALUES
+  ('00000000-0000-0000-0000-000000000001',
+   '10000000-0000-0000-0000-000000000005',
+   '10005', true);
+
+INSERT INTO issue_context (
+  tenant_id, issue_id, extractor_version, payment_reference, order_reference,
+  claimed_amount_cents, claimed_currency, primary_ask, message_count, highlights
+) VALUES
+  ('00000000-0000-0000-0000-000000000001',
+   '10000000-0000-0000-0000-000000000005',
+   'extract_v1', NULL, '1001', 4999, 'usd', 'refund_request', 2,
+   '[{"kind":"order_reference","display":"#1001","confidence":0.93,
+      "author_role":"customer","source_kind":"ticket_description",
+      "excerpt":"order #1001","rule":"order_labelled"},
+     {"kind":"money","display":"$49.99","confidence":0.97,
+      "author_role":"customer","source_kind":"ticket_description",
+      "excerpt":"$49.99","rule":"symbol_prefixed"},
+     {"kind":"ask","display":"Refund requested","confidence":0.80,
+      "author_role":"customer","source_kind":"ticket_description",
+      "excerpt":"refund","rule":"ask_refund"},
+     {"kind":"date","display":"Jan 15, 2026","confidence":0.99,
+      "author_role":"customer","source_kind":"comment",
+      "excerpt":"2026-01-15","rule":"iso_date"}]'::jsonb);
+
+INSERT INTO issue_card_state (
+  tenant_id, issue_id, zendesk_ticket_id, issue_state,
+  match_band, confidence_score, evidence_fetched_at, is_source_unavailable,
+  evidence_summary
+) VALUES
+  ('00000000-0000-0000-0000-000000000001',
+   '10000000-0000-0000-0000-000000000005',
+   '10005', 'OPEN', 'LOW', 0.31, now(), false,
+   '{"shopifyOrderName":"#1001","refundAmount":4999,"currency":"usd"}');

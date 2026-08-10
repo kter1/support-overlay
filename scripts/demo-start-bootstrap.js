@@ -11,6 +11,7 @@
 const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
+const { ENV_PATH, ensureEnvFile, loadEnvFile } = require("./lib/local-env");
 
 const ROOT = path.resolve(__dirname, "..");
 const BIN_DIR = path.join(ROOT, "node_modules", ".bin");
@@ -51,8 +52,24 @@ function ensureDependencies() {
   run("npm", ["install"]);
 }
 
+/**
+ * Configuration comes before dependencies: if the first run is going to write
+ * a `.env`, say so before several quiet minutes of `npm install`.
+ */
+function ensureConfiguration() {
+  if (ensureEnvFile()) {
+    console.log(`\nFirst run — wrote local configuration to ${path.relative(ROOT, ENV_PATH)}`);
+    console.log("Generated random tokens and a database password. Edit or delete it freely.\n");
+  }
+
+  loadEnvFile();
+}
+
 function main() {
+  ensureConfiguration();
   ensureDependencies();
+  // The child process inherits process.env, so the loaded values reach every
+  // step of the startup sequence.
   run("npm", ["run", "demo:start:internal"]);
 }
 

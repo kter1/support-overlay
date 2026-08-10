@@ -152,7 +152,8 @@ function checkEnvVars() {
     fail(
       "Required env vars",
       `${errors.length} missing/invalid var(s):\n    ${errors.join("\n    ")}`,
-      "Export required environment variables, then rerun: npm run doctor"
+      "Add the missing values to .env in the repository root, then rerun.\n  " +
+      "Deleting .env regenerates it with working defaults."
     );
   }
 }

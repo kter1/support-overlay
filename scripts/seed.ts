@@ -146,7 +146,8 @@ async function main() {
 
     console.log("✓ Demo data seeded:");
     console.log(`  Tenant:   Acme Support Co (${DEMO_TENANT})`);
-    console.log("  Tickets:  10001 (happy path), 10002 (degraded), 10003 (awaiting reconciliation)");
+    console.log("  Tickets:  10001 (happy path), 10002 (degraded),");
+    console.log("            10003 (awaiting reconciliation), 10005 (already refunded)");
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
     console.error("✗ Seed failed:", err);

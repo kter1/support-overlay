@@ -65,51 +65,57 @@ and the app has not been loaded in a live Zendesk instance.
 
 ## Quick Start
 
+**Prerequisites:** [Node.js 20+](https://nodejs.org) and
+[Docker Desktop](https://www.docker.com/products/docker-desktop/) — running,
+not just installed. Nothing else.
+
 ```bash
 git clone https://github.com/kter1/support-overlay.git
 cd support-overlay
-npm ci
-export POSTGRES_PASSWORD="$(openssl rand -hex 18)"
-export OPERATOR_TOKEN="$(openssl rand -hex 24)"
-export AGENT_TOKEN="$(openssl rand -hex 24)"
-export WEBHOOK_TOKEN="$(openssl rand -hex 24)"
-export POSTGRES_USER=iisl
-export POSTGRES_DB=iisl
-export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB}"
-export API_PORT=3001
-export WORKER_POLL_INTERVAL_MS=2000
-export WORKER_MAX_ATTEMPTS=5
-export USE_ZENDESK_SIMULATOR=true
-export USE_STRIPE_SIMULATOR=true
-export USE_SHOPIFY_SIMULATOR=true
-export VITE_API_BASE_URL=http://localhost:3001
-export VITE_AGENT_TOKEN="$AGENT_TOKEN"
 npm run demo:start
 ```
 
-If `openssl` is unavailable, set unique local strings for `POSTGRES_PASSWORD`,
-`OPERATOR_TOKEN`, `AGENT_TOKEN`, and `WEBHOOK_TOKEN`.
+That is the whole thing. The first run takes a few minutes: it installs
+dependencies, writes a `.env` with a generated database password and three
+random API tokens, starts Postgres in Docker, migrates, seeds four demo
+tickets, and brings up the API, the worker, and the sidebar.
 
-Tokens are stored only as SHA-256 hashes (`api_credentials`), and each one
-determines the tenant and role of every request made with it. `scripts/seed.ts`
-provisions them from the environment, so no usable credential is ever committed.
+Then open **<http://localhost:5173>**.
 
-Local demo note: this setup is intended for an isolated local environment only.
+You will see four tickets in the left rail. Click through them:
 
-Open:
+| Ticket | What it shows |
+|---|---|
+| **#10001** | Happy path — evidence matches, one click resolves it |
+| **#10002** | The Shopify order is gone. Last known state is shown, and the card says so rather than pretending |
+| **#10003** | A previous action whose outcome was never confirmed, held for an operator instead of retried |
+| **#10005** | **A refund was already issued for this order on another ticket.** The warning sits above the buttons |
 
-- UI: `http://localhost:5173`
-- API health: `http://localhost:3001/health`
+To stop everything: `Ctrl-C`, then `npm run infra:down`.
+
+If something looks wrong, `npm run doctor` checks each piece and names what is
+broken. `npm run demo:reset` returns the database to a clean seeded state.
+
+### About the generated `.env`
+
+Written on first run, git-ignored, and never overwritten — edit or delete it
+freely. Its tokens are random per machine, so nothing published here can be a
+real credential anywhere. Tokens are stored only as SHA-256 hashes in
+`api_credentials`, and each one determines the tenant and role of every request
+made with it.
+
+This configuration is for an isolated local machine, not a deployment.
 
 ## Demo - First Run
 
 `npm run demo:start` performs:
 
-1. Dependency/bootstrap checks.
-2. Process environment validation (required vars must be set in shell).
-3. Docker/Postgres startup.
-4. DB migration + idempotent seed.
-5. API, worker, and sidebar startup.
+1. Writes `.env` on first run; loads it on every run.
+2. Installs dependencies if they are missing.
+3. Validates configuration and checks it is internally consistent.
+4. Starts Postgres via Docker and waits for it to be healthy.
+5. Runs migrations and an idempotent seed.
+6. Starts the API, worker, and sidebar.
 
 If your local state is inconsistent:
 
