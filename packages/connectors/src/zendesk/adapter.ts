@@ -1,16 +1,31 @@
 /**
- * @iisl/connectors — Zendesk Adapter
- * VALIDATION: [STATIC-CONSISTENT]
+ * @support-overlay/connectors — Zendesk adapter
  *
- * Implementation note (explicit per build requirements):
- * Real API credentials are optional. When ZENDESK_API_TOKEN is not set,
- * the adapter uses the fixture simulator. This keeps the local demo runnable
- * without real Zendesk access.
+ * Real API credentials are optional. When ZENDESK_API_TOKEN is not set the
+ * adapter uses the fixture simulator, so the local demo runs without Zendesk
+ * access.
+ *
+ * Failures are classified, not flattened into generic Errors:
+ *   TimeoutError    → request sent, no response. The effect may have happened;
+ *                     the worker treats this as SENT_UNCERTAIN.
+ *   PermanentError  → 4xx. Retrying will never succeed.
+ *   Error           → anything else; retriable.
  *
  * Retry class notes for callers:
  * - update_ticket_status: RECONCILIATION_FIRST
  * - post_comment: AUTO_RETRY_WITH_DEDUPE
  */
+import { TimeoutError, PermanentError } from "@iisl/shared";
+
+/**
+ * fetch() surfaces an aborted request as a TimeoutError/AbortError DOMException
+ * depending on runtime. Either way the request left the process, so the effect
+ * is uncertain rather than known-failed.
+ */
+function isAbort(err: unknown): boolean {
+  const name = (err as { name?: string } | null)?.name;
+  return name === "AbortError" || name === "TimeoutError";
+}
 
 interface ZendeskComment {
   id: number;
@@ -54,12 +69,7 @@ export class ZendeskAdapter {
       { ticket: { status: targetStatus } }
     );
 
-    if (!response.ok) {
-      if (response.status >= 400 && response.status < 500) {
-        throw new Error(`Permanent error: Zendesk returned ${response.status}`);
-      }
-      throw new Error(`Retriable error: Zendesk returned ${response.status}`);
-    }
+    this.assertOk(response, `update ticket ${ticketId}`);
   }
 
   async getTicketStatus(ticketId: string): Promise<string> {
@@ -96,12 +106,7 @@ export class ZendeskAdapter {
       { "Idempotency-Key": idempotencyKey }
     );
 
-    if (!response.ok) {
-      if (response.status >= 400 && response.status < 500) {
-        throw new Error(`Permanent error: Zendesk returned ${response.status}`);
-      }
-      throw new Error(`Retriable error: Zendesk returned ${response.status}`);
-    }
+    this.assertOk(response, `post comment on ticket ${ticketId}`);
 
     const data = (await response.json()) as { comment: { id: number } };
     return String(data.comment.id);
@@ -144,6 +149,26 @@ export class ZendeskAdapter {
     return data.ticket;
   }
 
+  /** Turn a non-2xx response into the right error class for the retry policy. */
+  private assertOk(response: Response, what: string): void {
+    if (response.ok) return;
+
+    if (response.status === 408 || response.status === 504) {
+      throw new TimeoutError(
+        `Zendesk timed out on ${what} (HTTP ${response.status})`
+      );
+    }
+    if (response.status === 429) {
+      throw new Error(`Zendesk rate limited ${what} (HTTP 429)`);
+    }
+    if (response.status >= 400 && response.status < 500) {
+      throw new PermanentError(
+        `Zendesk rejected ${what} (HTTP ${response.status})`
+      );
+    }
+    throw new Error(`Zendesk failed ${what} (HTTP ${response.status})`);
+  }
+
   private async apiRequest(
     method: string,
     path: string,
@@ -153,16 +178,26 @@ export class ZendeskAdapter {
     const url = `https://${this.subdomain}.zendesk.com${path}`;
     const credentials = Buffer.from(`email@example.com/token:${this.apiToken}`).toString("base64");
 
-    return fetch(url, {
-      method,
-      headers: {
-        Authorization: `Basic ${credentials}`,
-        "Content-Type": "application/json",
-        ...extraHeaders,
-      },
-      body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(10000), // 10s timeout — triggers SENT_UNCERTAIN
-    });
+    try {
+      return await fetch(url, {
+        method,
+        headers: {
+          Authorization: `Basic ${credentials}`,
+          "Content-Type": "application/json",
+          ...extraHeaders,
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(10000),
+      });
+    } catch (err) {
+      // The request was already on the wire when it was aborted, so the write
+      // may have landed. Surfacing this as SENT_UNCERTAIN is what stops the
+      // worker from blindly retrying a side effect that may have occurred.
+      if (isAbort(err)) {
+        throw new TimeoutError(`Zendesk request timed out: ${method} ${path}`);
+      }
+      throw err;
+    }
   }
 }
 

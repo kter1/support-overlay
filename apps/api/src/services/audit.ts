@@ -9,9 +9,11 @@
  *
  * Spec reference: Section 2.11, Section 1.1
  */
-import { PoolClient } from "pg";
-import { query } from "../db/pool";
-import { ActorType } from "@iisl/shared";
+import { query, DbClient } from "../db/pool";
+import { ActorType, AuditEventType } from "@iisl/shared";
+
+// Re-exported so existing call sites can keep importing it from this module.
+export { AuditEventType };
 
 export interface AuditEvent {
   tenantId: string;
@@ -56,7 +58,7 @@ export async function writeAuditEvent(event: AuditEvent): Promise<void> {
  * Use this when the audit write must be atomic with other operations.
  */
 export async function writeAuditEventTx(
-  client: PoolClient,
+  client: DbClient,
   event: AuditEvent
 ): Promise<void> {
   await client.query(
@@ -78,55 +80,3 @@ export async function writeAuditEventTx(
     ]
   );
 }
-
-// ─── Standard Event Type Constants ───────────────────────────────────────────
-// Use these to avoid typos in event_type values across the codebase.
-
-export const AuditEventType = {
-  // Policy events
-  POLICY_DECISION: "policy_decision",
-
-  // Card events (bypass detection proxy signal)
-  CARD_LOADED: "card_loaded",
-  CARD_CTA_CLICKED: "card_cta_clicked",
-
-  // Approval lifecycle
-  ACTION_REQUIRES_APPROVAL: "action_requires_approval",
-  APPROVAL_GRANTED: "approval_granted",
-  APPROVAL_DENIED: "approval_denied",
-  APPROVAL_EXPIRED: "approval_expired",
-  APPROVAL_CANCELLED: "approval_cancelled",
-
-  // Action execution lifecycle
-  ACTION_EXECUTION_CREATED: "action_execution_created",
-  ACTION_EXECUTION_COMPLETED: "action_execution_completed",
-  ACTION_EXECUTION_RETRY: "action_execution_retry",
-  ACTION_EXECUTION_FAILED_TERMINAL: "action_execution_failed_terminal",
-  ACTION_EXECUTION_RECONCILED: "action_execution_reconciled",
-
-  // Evidence events
-  EVIDENCE_FETCHED: "evidence_fetched",
-  EVIDENCE_FETCH_FAILED: "evidence_fetch_failed",
-  EVIDENCE_OUTDATED: "evidence_outdated",
-
-  // Tombstone / source events
-  TICKET_MERGED: "ticket_merged",
-  TICKET_SOURCE_DELETED: "ticket_source_deleted",
-  SOURCE_UNAVAILABLE: "source_unavailable",
-  ORDER_ARCHIVED: "order_archived",
-
-  // Card state events
-  CARD_STATE_REBUILT: "card_state_rebuilt",
-
-  // Operator repair events
-  OPERATOR_REBUILD_CARD_STATE: "operator_rebuild_card_state",
-  OPERATOR_REPLAY_EVENT: "operator_replay_event",
-  OPERATOR_RECONCILE_EXECUTION: "operator_reconcile_execution",
-  OPERATOR_FORCE_SYNC_ZENDESK: "operator_force_sync_zendesk",
-
-  // Inbound events
-  INBOUND_EVENT_RECEIVED: "inbound_event_received",
-  INBOUND_EVENT_PROCESSED: "inbound_event_processed",
-  INBOUND_EVENT_FAILED: "inbound_event_failed",
-  INBOUND_EVENT_REPLAYED: "inbound_event_replayed",
-} as const;

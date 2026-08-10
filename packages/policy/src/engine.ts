@@ -92,6 +92,7 @@ interface PolicyRule {
  * LOW = evidence refresh, internal only
  */
 export const ACTION_RISK_TIERS: Record<ActionType, ActionRiskTier> = {
+  [ActionType.ISSUE_REFUND]: ActionRiskTier.HIGH,
   [ActionType.CLOSE_CONFIRMED]: ActionRiskTier.HIGH,
   [ActionType.ESCALATE_MISSING]: ActionRiskTier.MEDIUM,
   [ActionType.UPDATE_PENDING]: ActionRiskTier.MEDIUM,

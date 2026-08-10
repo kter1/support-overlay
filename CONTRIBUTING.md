@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for contributing to `support_overlay`.
+Thanks for contributing to `support-overlay`.
 
 ## Workflow
 
@@ -18,9 +18,15 @@ npm run demo:start
 
 ## Adding A Connector
 
-- Implement adapter logic under `packages/connectors/src/<provider>/`.
+- Implement adapter logic under `packages/connectors/src/<provider>/` and export
+  it from `packages/connectors/src/index.ts`.
 - Keep provider-specific details encapsulated in connector modules.
-- Add integration tests for connector behavior.
+- **Classify failures.** Throw `TimeoutError` when a request was sent but no
+  response arrived, `PermanentError` for rejections that retrying cannot fix,
+  and a plain `Error` for everything else. The worker's retry policy depends on
+  this distinction; a timeout misreported as a generic failure is what causes a
+  duplicate side effect.
+- Add tests for connector behavior, including the timeout path.
 - Document any required environment variables in `README.md` and docs.
 
 ## Tests
@@ -30,7 +36,8 @@ npm run demo:start
 
 ## Pull Request Checklist
 
-- [ ] Lint passes (`npm run lint`)
+- [ ] Lint and typecheck pass (`npm run lint`)
+- [ ] Tests pass (`npm test`)
 - [ ] Smoke tests pass (`npm run demo:smoke`)
 - [ ] Docs updated for behavior/config changes
 - [ ] New connector logic includes tests

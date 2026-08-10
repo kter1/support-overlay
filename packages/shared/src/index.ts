@@ -122,6 +122,8 @@ export enum IssueState {
  * Each action type has a corresponding retry classification (see RetryClass).
  */
 export enum ActionType {
+  /** Money movement: create a Stripe refund. Highest-risk action. */
+  ISSUE_REFUND = "issue_refund",
   CLOSE_CONFIRMED = "close_confirmed",
   ESCALATE_MISSING = "escalate_missing",
   UPDATE_PENDING = "update_pending",
@@ -158,6 +160,8 @@ export enum RetryClass {
  * See spec Section 4.2.3.
  */
 export const ACTION_RETRY_CLASS: Record<ActionType, RetryClass> = {
+  // Never auto-retried. An uncertain refund is escalated to an operator.
+  [ActionType.ISSUE_REFUND]: RetryClass.OPERATOR_RETRY_ONLY,
   [ActionType.CLOSE_CONFIRMED]: RetryClass.RECONCILIATION_FIRST,
   [ActionType.ESCALATE_MISSING]: RetryClass.SAFE_AUTO_RETRY,
   [ActionType.UPDATE_PENDING]: RetryClass.RECONCILIATION_FIRST,
@@ -282,6 +286,115 @@ export enum ActorType {
   SYSTEM = "system",
   WEBHOOK = "webhook",
   OPERATOR = "operator",
+}
+
+// ─── Audit Event Types ────────────────────────────────────────────────────────
+
+/**
+ * Canonical audit_log.event_type values. Use these rather than string literals
+ * so event names stay greppable and consistent across services.
+ */
+export const AuditEventType = {
+  // Policy
+  POLICY_DECISION: "policy_decision",
+
+  // Card (bypass-detection proxy signal)
+  CARD_LOADED: "card_loaded",
+  CARD_CTA_CLICKED: "card_cta_clicked",
+
+  // Approval lifecycle
+  ACTION_REQUIRES_APPROVAL: "action_requires_approval",
+  APPROVAL_GRANTED: "approval_granted",
+  APPROVAL_DENIED: "approval_denied",
+  APPROVAL_EXPIRED: "approval_expired",
+  APPROVAL_CANCELLED: "approval_cancelled",
+
+  // Action execution lifecycle
+  ACTION_EXECUTION_CREATED: "action_execution_created",
+  ACTION_EXECUTION_COMPLETED: "action_execution_completed",
+  ACTION_EXECUTION_RETRY: "action_execution_retry",
+  ACTION_EXECUTION_FAILED_TERMINAL: "action_execution_failed_terminal",
+  ACTION_EXECUTION_BLOCKED_OPERATOR: "action_execution_blocked_operator",
+  ACTION_EXECUTION_RECONCILED: "action_execution_reconciled",
+
+  // Evidence
+  EVIDENCE_FETCHED: "evidence_fetched",
+  EVIDENCE_MATCH_COMPUTED: "evidence_match_computed",
+  EVIDENCE_FETCH_FAILED: "evidence_fetch_failed",
+  EVIDENCE_OUTDATED: "evidence_outdated",
+
+  // Tombstone / source
+  TICKET_MERGED: "ticket_merged",
+  TICKET_SOURCE_DELETED: "ticket_source_deleted",
+  SOURCE_UNAVAILABLE: "source_unavailable",
+  ORDER_ARCHIVED: "order_archived",
+
+  // Card state
+  CARD_STATE_REBUILT: "card_state_rebuilt",
+
+  // Operator repair
+  OPERATOR_REBUILD_CARD_STATE: "operator_rebuild_card_state",
+  OPERATOR_REPLAY_EVENT: "operator_replay_event",
+  OPERATOR_RECONCILE_EXECUTION: "operator_reconcile_execution",
+  OPERATOR_FORCE_SYNC_ZENDESK: "operator_force_sync_zendesk",
+
+  // Inbound events
+  INBOUND_EVENT_RECEIVED: "inbound_event_received",
+  INBOUND_EVENT_PROCESSED: "inbound_event_processed",
+  INBOUND_EVENT_FAILED: "inbound_event_failed",
+  INBOUND_EVENT_REPLAYED: "inbound_event_replayed",
+
+  // Tenant administration
+  TENANT_CONFIG_CHANGED: "tenant_config_changed",
+
+  // Authentication
+  AUTH_REJECTED: "auth_rejected",
+} as const;
+
+export type AuditEventType =
+  (typeof AuditEventType)[keyof typeof AuditEventType];
+
+// ─── Provider Call Outcomes ───────────────────────────────────────────────────
+
+/**
+ * Connector adapters throw these so the worker can distinguish outcomes that
+ * need different handling. A plain Error is treated as retriable.
+ *
+ * TimeoutError specifically means "the request was sent but no response was
+ * received" — the effect may or may not have occurred. That is what drives
+ * SENT_UNCERTAIN, and for money movement it means never auto-retrying.
+ */
+export class TimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TimeoutError";
+  }
+}
+
+/** A provider rejection that will never succeed on retry (4xx, validation). */
+export class PermanentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PermanentError";
+  }
+}
+
+/**
+ * Classify by name rather than `instanceof`.
+ *
+ * These errors cross package boundaries, and a module can legitimately be
+ * instantiated more than once — duplicate installs, a bundler and the CJS
+ * require graph, a test runner's transform pipeline. When that happens
+ * `instanceof` fails against a structurally identical class, and the failure
+ * mode here is severe: an uncertain refund misread as a plain error is exactly
+ * the path that causes a double refund.
+ */
+export function isTimeoutError(err: unknown): boolean {
+  return (err as { name?: string } | null)?.name === "TimeoutError";
+}
+
+export function isPermanentError(err: unknown): boolean {
+  return (err as { name?: string } | null)?.name === "PermanentError";
 }
 
 // ─── Risk Tiers ───────────────────────────────────────────────────────────────

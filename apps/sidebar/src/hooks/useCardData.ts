@@ -5,6 +5,7 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
+import { apiRequest } from "../zaf";
 
 interface CardData {
   issueId: string;
@@ -86,10 +87,6 @@ interface ApiCardResponse {
   } | null;
 }
 
-const API_BASE = typeof import.meta !== "undefined" && (import.meta as Record<string, unknown>).env
-  ? ((import.meta as Record<string, unknown>).env as Record<string, string>).VITE_API_BASE_URL ?? "http://localhost:3001"
-  : "http://localhost:3001";
-const TENANT_ID = "00000000-0000-0000-0000-000000000001";
 const DEFAULT_UNAVAILABLE_REASON = "Source record is unavailable. Use the last known state and escalate if needed.";
 
 function asString(value: unknown): string | null {
@@ -324,32 +321,23 @@ export function useCardData(zendeskTicketId: string) {
   const [error, setError] = useState<string | null>(null);
 
   const refetch = useCallback(async () => {
-    try {
-      const response = await fetch(
-        `${API_BASE}/api/v1/card/${zendeskTicketId}`,
-        {
-          headers: {
-            "x-tenant-id": TENANT_ID,
-          },
-        }
+    const response = await apiRequest<ApiCardResponse>(
+      `/api/v1/card/${zendeskTicketId}`
+    );
+
+    if (!response.ok || !response.body) {
+      setError(
+        response.status === 404
+          ? "No resolution record exists for this ticket yet."
+          : response.error ?? "Could not load the resolution card."
       );
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          setError(`Ticket ${zendeskTicketId} not found`);
-          return;
-        }
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const data = await response.json() as ApiCardResponse;
-      setCard(normalizeCardResponse(data));
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load card data");
-    } finally {
       setLoading(false);
+      return;
     }
+
+    setCard(normalizeCardResponse(response.body));
+    setError(null);
+    setLoading(false);
   }, [zendeskTicketId]);
 
   // Fetch on mount and when ticket changes

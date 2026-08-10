@@ -1,7 +1,12 @@
 -- ============================================================================
--- IISL Phase 1 — Demo Seed Data
--- Provides three demo scenarios + one approvals demo scenario
--- Run after 001_initial_schema.sql
+-- support-overlay — Demo seed data
+--
+-- Three scenarios covering the happy path, degraded evidence, and an execution
+-- awaiting operator reconciliation. Run after db/migrations/001_baseline.sql.
+--
+-- API credentials are NOT seeded here — scripts/seed.ts provisions them from
+-- the AGENT_TOKEN / OPERATOR_TOKEN environment variables, so no usable token
+-- is ever committed to the repository.
 -- ============================================================================
 
 -- ─── Demo Tenant ─────────────────────────────────────────────────────────────
@@ -34,6 +39,11 @@ INSERT INTO tenant_integrations (tenant_id, source_system, use_simulator) VALUES
   ('00000000-0000-0000-0000-000000000001', 'stripe',  true),
   ('00000000-0000-0000-0000-000000000001', 'shopify', true);
 
+-- The operator principal may approve. Approval endpoints check this rather than
+-- trusting a manager id from the request body.
+INSERT INTO manager_grants (tenant_id, principal_id) VALUES
+  ('00000000-0000-0000-0000-000000000001', 'operator-demo');
+
 -- ─── Scenario 1: Happy Path — Refund Confirmed ───────────────────────────────
 -- Ticket 10001: High-confidence match, refund succeeded in Stripe
 -- Expected demo: agent sees CLOSE button, clicks it, issue resolves in <3s
@@ -65,30 +75,37 @@ INSERT INTO evidence_raw_snapshots (
    '{"id":"order_happy_001","name":"#1001","financial_status":"refunded","fulfillment_status":"fulfilled","total_price":"49.99","currency":"USD","created_at":"2024-01-01T00:00:00Z"}');
 
 INSERT INTO evidence_normalized (
-  tenant_id, issue_id, source_system, source_record_id, raw_snapshot_id,
-  normalizer_version, normalized_data, fetched_at, is_source_unavailable
+  id, tenant_id, issue_id, source_system, source_record_id, raw_snapshot_id,
+  normalizer_version, normalized_data,
+  refund_status, refund_amount_cents, refund_currency, refund_id, charge_id,
+  fetched_at, is_source_unavailable
 ) VALUES
-  ('00000000-0000-0000-0000-000000000001',
+  ('50000000-0000-0000-0000-000000000001',
+   '00000000-0000-0000-0000-000000000001',
    '10000000-0000-0000-0000-000000000001',
    'stripe', 're_happy_001',
    '20000000-0000-0000-0000-000000000001',
    'v1',
    '{"stripeRefundId":"re_happy_001","stripeRefundStatus":"succeeded","stripeChargeAmount":4999,"stripeCurrency":"usd","refundAmount":4999,"refundCurrency":"usd"}',
+   'succeeded', 4999, 'usd', 're_happy_001', 'ch_001',
    now(), false),
-  ('00000000-0000-0000-0000-000000000001',
+  ('50000000-0000-0000-0000-000000000002',
+   '00000000-0000-0000-0000-000000000001',
    '10000000-0000-0000-0000-000000000001',
    'shopify', 'order_happy_001',
    '20000000-0000-0000-0000-000000000002',
    'v1',
    '{"shopifyOrderId":"order_happy_001","shopifyOrderName":"#1001","shopifyFinancialStatus":"refunded","shopifyFulfillmentStatus":"fulfilled","shopifyOrderTotal":4999,"shopifyOrderCurrency":"USD"}',
+   null, 4999, 'usd', null, null,
    now(), false);
 
 INSERT INTO evidence_match_results (
-  tenant_id, issue_id, match_algorithm_version, match_band,
+  tenant_id, issue_id, evidence_normalized_id, match_algorithm_version, match_band,
   confidence_score, matched_fields, match_notes
 ) VALUES
   ('00000000-0000-0000-0000-000000000001',
    '10000000-0000-0000-0000-000000000001',
+   '50000000-0000-0000-0000-000000000001',
    'v1', 'HIGH', 0.94,
    ARRAY['refund_amount','currency','financial_status'],
    'Stripe refund and Shopify order amounts match within tolerance. Financial status confirms refund posted.');
@@ -139,30 +156,37 @@ SET raw_data_redaction_reason = 'source_archived'
 WHERE id = '20000000-0000-0000-0000-000000000004';
 
 INSERT INTO evidence_normalized (
-  tenant_id, issue_id, source_system, source_record_id, raw_snapshot_id,
-  normalizer_version, normalized_data, fetched_at, is_source_unavailable, source_unavailable_reason
+  id, tenant_id, issue_id, source_system, source_record_id, raw_snapshot_id,
+  normalizer_version, normalized_data,
+  refund_status, refund_amount_cents, refund_currency, refund_id, charge_id,
+  fetched_at, is_source_unavailable, source_unavailable_reason
 ) VALUES
-  ('00000000-0000-0000-0000-000000000001',
+  ('50000000-0000-0000-0000-000000000003',
+   '00000000-0000-0000-0000-000000000001',
    '10000000-0000-0000-0000-000000000002',
    'stripe', 're_degraded_001',
    '20000000-0000-0000-0000-000000000003',
    'v1',
    '{"stripeRefundId":"re_degraded_001","stripeRefundStatus":"pending","stripeChargeAmount":7500,"stripeCurrency":"usd","refundAmount":7500,"refundCurrency":"usd"}',
+   'pending', 7500, 'usd', 're_degraded_001', 'ch_002',
    now(), false, null),
-  ('00000000-0000-0000-0000-000000000001',
+  ('50000000-0000-0000-0000-000000000004',
+   '00000000-0000-0000-0000-000000000001',
    '10000000-0000-0000-0000-000000000002',
    'shopify', 'order_archived_001',
    '20000000-0000-0000-0000-000000000004',
    'v1',
    '{}',  -- no usable normalized data
+   null, null, null, null, null,
    now(), true, 'Shopify order archived — last known state unavailable. Verify via Shopify admin if needed.');
 
 INSERT INTO evidence_match_results (
-  tenant_id, issue_id, match_algorithm_version, match_band,
+  tenant_id, issue_id, evidence_normalized_id, match_algorithm_version, match_band,
   confidence_score, matched_fields, match_notes
 ) VALUES
   ('00000000-0000-0000-0000-000000000001',
    '10000000-0000-0000-0000-000000000002',
+   '50000000-0000-0000-0000-000000000003',
    'v1', 'MEDIUM', 0.71,
    ARRAY['refund_amount'],
    'Stripe data available. Shopify order no longer accessible — match based on Stripe evidence only.');
@@ -177,16 +201,20 @@ INSERT INTO issue_card_state (
    '10002', 'OPEN', 'MEDIUM', 0.71, now(), true,
    '{"stripeRefundStatus":"pending","stripeChargeAmount":7500,"refundAmount":7500,"currency":"usd","sourceUnavailable":true,"sourceUnavailableReason":"Shopify order archived — last known state unavailable. Verify via Shopify admin if needed."}');
 
--- ─── Scenario 3: Retry + Unknown Outcome ─────────────────────────────────────
--- Ticket 10003: Action was taken, outbox message reached SENT_UNCERTAIN state
--- Expected demo: shows retrying state, operator can reconcile
+-- ─── Scenario 3: Awaiting operator reconciliation ────────────────────────────
+-- Ticket 10003: a past close attempt whose outcome was never confirmed. The
+-- execution is parked in FAILED_TERMINAL with the outbox row BLOCKED_OPERATOR.
+--
+-- This is seeded state representing a prior incident, not a live demonstration
+-- of uncertainty detection. To see the worker actually produce SENT_UNCERTAIN,
+-- run the exactly-once tests, which drive a timeout through the adapter.
 
 INSERT INTO issues (id, tenant_id, customer_id, customer_email, state) VALUES
   ('10000000-0000-0000-0000-000000000003',
    '00000000-0000-0000-0000-000000000001',
    'cust_retry_001',
    'carol@example.com',
-   'ACTION_IN_PROGRESS');
+   'OPEN');
 
 INSERT INTO issue_tickets (tenant_id, issue_id, zendesk_ticket_id, is_primary) VALUES
   ('00000000-0000-0000-0000-000000000001',
@@ -203,28 +231,34 @@ INSERT INTO evidence_raw_snapshots (
    '{"id":"re_retry_001","amount":3000,"currency":"usd","status":"succeeded","charge":"ch_003","created":1704067200}');
 
 INSERT INTO evidence_normalized (
-  tenant_id, issue_id, source_system, source_record_id, raw_snapshot_id,
-  normalizer_version, normalized_data, fetched_at, is_source_unavailable
+  id, tenant_id, issue_id, source_system, source_record_id, raw_snapshot_id,
+  normalizer_version, normalized_data,
+  refund_status, refund_amount_cents, refund_currency, refund_id, charge_id,
+  fetched_at, is_source_unavailable
 ) VALUES
-  ('00000000-0000-0000-0000-000000000001',
+  ('50000000-0000-0000-0000-000000000005',
+   '00000000-0000-0000-0000-000000000001',
    '10000000-0000-0000-0000-000000000003',
    'stripe', 're_retry_001',
    '20000000-0000-0000-0000-000000000005',
    'v1',
    '{"stripeRefundId":"re_retry_001","stripeRefundStatus":"succeeded","stripeChargeAmount":3000,"stripeCurrency":"usd","refundAmount":3000,"refundCurrency":"usd"}',
+   'succeeded', 3000, 'usd', 're_retry_001', 'ch_003',
    now(), false);
 
 INSERT INTO evidence_match_results (
-  tenant_id, issue_id, match_algorithm_version, match_band,
+  tenant_id, issue_id, evidence_normalized_id, match_algorithm_version, match_band,
   confidence_score, matched_fields, match_notes
 ) VALUES
   ('00000000-0000-0000-0000-000000000001',
    '10000000-0000-0000-0000-000000000003',
+   '50000000-0000-0000-0000-000000000005',
    'v1', 'HIGH', 0.91,
    ARRAY['refund_amount','refund_status'],
    'Stripe refund confirmed succeeded. High confidence match.');
 
--- Action execution that is in FAILED_RETRIABLE (will be picked up by worker demo)
+-- Execution parked for reconciliation: the outcome was never confirmed, so it
+-- must not be retried automatically.
 INSERT INTO action_executions (
   id, tenant_id, issue_id, action_type, requested_by_agent_id,
   idempotency_key, planned_state, status, attempt_count, next_attempt_at,
@@ -235,13 +269,14 @@ INSERT INTO action_executions (
    '10000000-0000-0000-0000-000000000003',
    'close_confirmed', 'agent-demo-001',
    'demo-idempotency-close-10003', 'RESOLVED',
-   'FAILED_RETRIABLE', 2, now() + interval '30 seconds',
+   'FAILED_TERMINAL', 2, null,
    'refund.close_confirmed.high_match', 'v1');
 
--- Outbox message with SENT_UNCERTAIN effects ledger entry
+-- Outbox row whose effect is settled as SENT_UNCERTAIN. BLOCKED_OPERATOR and
+-- effect_settled_at together guarantee the worker will never re-dispatch it.
 INSERT INTO outbox_messages (
   id, tenant_id, action_execution_id, target_system, payload,
-  idempotency_key, status, attempt_count, effects
+  idempotency_key, status, attempt_count, effect_settled_at, effects
 ) VALUES
   ('40000000-0000-0000-0000-000000000001',
    '00000000-0000-0000-0000-000000000001',
@@ -249,7 +284,7 @@ INSERT INTO outbox_messages (
    'zendesk',
    '{"type":"set_status","ticket_id":"10003","status":"solved"}',
    'demo-outbox-close-10003',
-   'FAILED_RETRIABLE', 2,
+   'BLOCKED_OPERATOR', 2, now(),
    '[
      {
        "effect_type": "zendesk_status_set",
@@ -285,7 +320,7 @@ INSERT INTO issue_card_state (
 ) VALUES
   ('00000000-0000-0000-0000-000000000001',
    '10000000-0000-0000-0000-000000000003',
-   '10003', 'ACTION_IN_PROGRESS', 'HIGH', 0.91, now(), false,
+   '10003', 'OPEN', 'HIGH', 0.91, now(), false,
    '30000000-0000-0000-0000-000000000001',
    'close_confirmed',
    '{"stripeRefundStatus":"succeeded","stripeChargeAmount":3000,"refundAmount":3000,"currency":"usd"}');

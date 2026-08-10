@@ -34,8 +34,7 @@ interface ActionPanelProps {
   onRefetch: () => void;
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3001";
-const TENANT_ID = "00000000-0000-0000-0000-000000000001"; // Demo tenant
+import { apiRequest } from "../zaf";
 
 export default function ActionPanel({ card, agentId, onActionComplete, onRefetch }: ActionPanelProps) {
   const [submitting, setSubmitting] = useState<string | null>(null);
@@ -62,35 +61,27 @@ export default function ActionPanel({ card, agentId, onActionComplete, onRefetch
     const idempotencyKey = `${card.issueId}-${cta.actionType}-${Date.now()}`;
 
     try {
-      const response = await fetch(`${API_BASE}/api/v1/actions`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-tenant-id": TENANT_ID,
-          "x-agent-id": agentId,
-        },
-        body: JSON.stringify({
-          action_type: cta.actionType,
-          issue_id: card.issueId,
-          idempotency_key: idempotencyKey,
-          action_params: {},
-        }),
-      });
-
-      const result = await response.json() as {
+      const response = await apiRequest<{
         outcome?: string;
         action_execution_id?: string;
         approval_request_id?: string;
         deny_reason?: string;
+        idempotent_replay?: boolean;
         error?: string;
-      };
+      }>("/api/v1/actions", {
+        method: "POST",
+        body: {
+          action_type: cta.actionType,
+          issue_id: card.issueId,
+          idempotency_key: idempotencyKey,
+          action_params: {},
+        },
+      });
+
+      const result = response.body ?? {};
 
       if (!response.ok) {
-        setActionError(
-          result.error ??
-          result.deny_reason ??
-          `Action failed (HTTP ${response.status})`
-        );
+        setActionError(result.deny_reason ?? response.error ?? "Action failed.");
         return;
       }
 

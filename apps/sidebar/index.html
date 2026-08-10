@@ -3,14 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>IISL — Resolution Card</title>
+    <title>Resolution Card</title>
+    <!--
+      ZAF SDK. Present only when Zendesk serves this iframe; its absence is how
+      the app detects standalone demo mode (see src/zaf.ts).
+    -->
+    <script src="https://static.zdassets.com/zendesk_app_framework_sdk/2.0/zaf_sdk.min.js"></script>
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; }
+      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8f9fa; }
     </style>
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="./src/main.tsx"></script>
   </body>
 </html>

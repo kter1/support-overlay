@@ -13,11 +13,13 @@
  */
 import { FastifyInstance } from "fastify";
 import { query } from "../db/pool";
+import { requireAuth } from "../middleware/auth";
 
 export async function metricsRoutes(app: FastifyInstance): Promise<void> {
+  app.addHook("onRequest", requireAuth("agent", "operator"));
+
   app.get("/", async (request, reply) => {
-    const tenantId = request.headers["x-tenant-id"] as string;
-    if (!tenantId) return reply.status(401).send({ error: "x-tenant-id required" });
+    const { tenantId } = request.auth;
 
     const [
       webhookLag,

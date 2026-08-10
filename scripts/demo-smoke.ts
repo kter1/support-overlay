@@ -30,14 +30,20 @@ const c = {
 
 const API_PORT     = process.env.API_PORT ?? "3001";
 const SIDEBAR_PORT = process.env.SIDEBAR_PORT ?? "5173";
-const opTokenRaw   = process.env.OPERATOR_TOKEN;
-if (!opTokenRaw || opTokenRaw.trim() === "") {
-  console.error(`${c.red}✗ OPERATOR_TOKEN is required for smoke checks${c.reset}`);
-  console.error(`${c.yellow}Fix:${c.reset} export OPERATOR_TOKEN=<operator_token>`);
-  process.exit(1);
+function requireToken(name: string): string {
+  const value = process.env[name];
+  if (!value || value.trim() === "") {
+    console.error(`${c.red}✗ ${name} is required for smoke checks${c.reset}`);
+    console.error(`${c.yellow}Fix:${c.reset} export ${name}=<token>`);
+    process.exit(1);
+  }
+  return value;
 }
-const OP_TOKEN     = opTokenRaw;
-const TENANT_ID    = "00000000-0000-0000-0000-000000000001";
+
+// Tenancy is derived from the token by the API, so smoke checks no longer send
+// a tenant id of their own.
+const OP_TOKEN     = requireToken("OPERATOR_TOKEN");
+const AGENT_TOKEN  = requireToken("AGENT_TOKEN");
 const DEMO_TICKETS = ["10001", "10002", "10003"];
 
 // ─── Result tracking ──────────────────────────────────────────────────────────
@@ -130,7 +136,7 @@ async function checkApiDbConnectivity() {
   try {
     const { status } = await httpGet(
       `http://localhost:${API_PORT}/metrics`,
-      { "x-tenant-id": TENANT_ID }
+      { Authorization: `Bearer ${AGENT_TOKEN}` }
     );
     if (status === 200) {
       pass("API DB connectivity", `Metrics endpoint returned HTTP ${status}`);
@@ -160,8 +166,7 @@ async function checkWorkerHeartbeat() {
     const { status, body } = await httpGet(
       `http://localhost:${API_PORT}/metrics`,
       {
-        "x-tenant-id": TENANT_ID,
-        "Authorization": `Bearer ${OP_TOKEN}`,
+        Authorization: `Bearer ${OP_TOKEN}`,
       }
     );
 
@@ -219,7 +224,7 @@ async function checkSeededTickets() {
     try {
       const { status, body } = await httpGet(
         `http://localhost:${API_PORT}/api/v1/card/${ticketId}`,
-        { "x-tenant-id": TENANT_ID }
+        { Authorization: `Bearer ${AGENT_TOKEN}` }
       );
 
       if (status === 200) {

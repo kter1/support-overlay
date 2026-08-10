@@ -14,29 +14,24 @@
  */
 import { FastifyInstance } from "fastify";
 import { query, withTransaction } from "../db/pool";
-import { writeAuditEventTx, AuditEventType } from "../services/audit";
+import { writeAuditEvent, writeAuditEventTx, AuditEventType } from "../services/audit";
+import { ZendeskAdapter } from "@iisl/connectors";
+import { requireAuth } from "../middleware/auth";
+import { parseBody, notFound } from "../middleware/errors";
+import {
+  reconcileBody,
+  operatorRepairBody,
+  syncZendeskBody,
+  tenantConfigBody,
+} from "../schemas";
+import { recomputeMatchForIssue } from "../services/matching";
+import { rebuildCardState } from "../workers/outboxWorker";
 import { ActorType } from "@iisl/shared";
 
-const OPERATOR_TOKEN = process.env.OPERATOR_TOKEN ?? "dev_operator_token_change_in_prod";
-
-/**
- * Operator authentication middleware.
- * In production: replace with proper JWT/RBAC. For pilot: bearer token check.
- */
-function requireOperator(request: any, reply: any, done: () => void): void {
-  const authHeader = request.headers["authorization"] as string;
-  const token = authHeader?.replace("Bearer ", "");
-
-  if (!token || token !== OPERATOR_TOKEN) {
-    reply.status(401).send({ error: "Operator authentication required" });
-    return;
-  }
-
-  done();
-}
-
 export async function opsRoutes(app: FastifyInstance): Promise<void> {
-  app.addHook("onRequest", requireOperator);
+  // Operator credentials carry their own tenant, so these repair endpoints can
+  // only ever touch the tenant the token belongs to.
+  app.addHook("onRequest", requireAuth("operator"));
 
   /**
    * POST /ops/issues/:issue_id/rebuild-card-state
@@ -49,15 +44,10 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
     Params: { issue_id: string };
     Body: { reason: string };
   }>("/issues/:issue_id/rebuild-card-state", async (request, reply) => {
-    const tenantId = request.headers["x-tenant-id"] as string;
-    if (!tenantId) return reply.status(401).send({ error: "x-tenant-id required" });
+    const { tenantId } = request.auth;
 
     const { issue_id } = request.params;
-    const { reason } = request.body;
-
-    if (!reason) {
-      return reply.status(400).send({ error: "reason is required" });
-    }
+    const { reason } = parseBody(operatorRepairBody, request.body);
 
     await withTransaction(async (client) => {
       // Recompute from canonical tables
@@ -131,15 +121,10 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
     Params: { event_id: string };
     Body: { reason: string };
   }>("/inbound-events/:event_id/replay", async (request, reply) => {
-    const tenantId = request.headers["x-tenant-id"] as string;
-    if (!tenantId) return reply.status(401).send({ error: "x-tenant-id required" });
+    const { tenantId } = request.auth;
 
     const { event_id } = request.params;
-    const { reason } = request.body;
-
-    if (!reason) {
-      return reply.status(400).send({ error: "reason is required" });
-    }
+    const { reason } = parseBody(operatorRepairBody, request.body);
 
     const result = await query<{ id: string; status: string; source_system: string }>(
       `UPDATE inbound_events
@@ -150,7 +135,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
     );
 
     if (result.rows.length === 0) {
-      return reply.status(404).send({ error: "Event not found" });
+      throw notFound("Event not found");
     }
 
     await query(
@@ -183,7 +168,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { event_id: string } }>(
     "/inbound-events/:event_id",
     async (request, reply) => {
-      const tenantId = request.headers["x-tenant-id"] as string;
+      const { tenantId } = request.auth;
       const result = await query(
         `SELECT id, source_system, source_event_type, status, error, received_at, processed_at
          FROM inbound_events WHERE id = $1 AND tenant_id = $2`,
@@ -191,7 +176,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
       );
 
       if (result.rows.length === 0) {
-        return reply.status(404).send({ error: "Event not found" });
+        throw notFound("Event not found");
       }
       return reply.send(result.rows[0]);
     }
@@ -218,42 +203,41 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
       corrective_action_taken?: string;
     };
   }>("/action-executions/:execution_id/reconcile", async (request, reply) => {
-    const tenantId = request.headers["x-tenant-id"] as string;
-    if (!tenantId) return reply.status(401).send({ error: "x-tenant-id required" });
+    const { tenantId } = request.auth;
 
     const { execution_id } = request.params;
     const {
       external_side_effect_status,
       investigation_notes,
       corrective_action_taken,
-    } = request.body;
+    } = parseBody(reconcileBody, request.body);
 
-    if (!external_side_effect_status || !investigation_notes) {
-      return reply.status(400).send({
-        error:
-          "external_side_effect_status and investigation_notes are required",
-      });
-    }
 
     await withTransaction(async (client) => {
       const result = await client.query<{ id: string; issue_id: string; status: string }>(
         `UPDATE action_executions
-         SET reconciled_at = now(),
-             reconciled_by = $2,
-             reconciliation_outcome = $3
-         WHERE id = $1 AND tenant_id = $4 AND status = 'FAILED_TERMINAL'
-         RETURNING id, issue_id, status`,
+            SET reconciled_at = now(),
+                reconciled_by = $2,
+                reconciliation_outcome = $3,
+                investigation_notes = $5,
+                corrective_action_taken = $6
+          WHERE id = $1 AND tenant_id = $4
+            AND status IN ('FAILED_TERMINAL', 'BLOCKED_OPERATOR')
+            AND reconciled_at IS NULL
+          RETURNING id, issue_id, status`,
         [
           execution_id,
-          request.headers["x-operator-id"] ?? "operator",
+          request.auth.principalId,
           external_side_effect_status,
           tenantId,
+          investigation_notes,
+          corrective_action_taken ?? null,
         ]
       );
 
       if (result.rows.length === 0) {
         throw new Error(
-          "Execution not found, not FAILED_TERMINAL, or already reconciled"
+          "Execution not found, not awaiting reconciliation, or already reconciled"
         );
       }
 
@@ -262,7 +246,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
         issueId: result.rows[0].issue_id,
         eventType: AuditEventType.OPERATOR_RECONCILE_EXECUTION,
         actorType: ActorType.OPERATOR,
-        actorId: request.headers["x-operator-id"] as string,
+        actorId: request.auth.principalId,
         payload: {
           execution_id,
           external_side_effect_status,
@@ -293,17 +277,10 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
     Params: { issue_id: string };
     Body: { reason: string; target_status: "open" | "pending" | "solved" };
   }>("/issues/:issue_id/sync-zendesk", async (request, reply) => {
-    const tenantId = request.headers["x-tenant-id"] as string;
-    if (!tenantId) return reply.status(401).send({ error: "x-tenant-id required" });
+    const { tenantId } = request.auth;
 
     const { issue_id } = request.params;
-    const { reason, target_status } = request.body;
-
-    if (!reason || !target_status) {
-      return reply.status(400).send({
-        error: "reason and target_status are required",
-      });
-    }
+    const { reason, target_status } = parseBody(syncZendeskBody, request.body);
 
     // Get primary ticket ID
     const ticketResult = await query<{ zendesk_ticket_id: string }>(
@@ -320,17 +297,16 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
 
     const { zendesk_ticket_id } = ticketResult.rows[0];
 
-    // Import adapter inline to avoid circular deps
-    const { ZendeskAdapter } = await import(
-      "../../../../packages/connectors/src/zendesk/adapter"
-    );
     const adapter = new ZendeskAdapter();
 
     try {
       await adapter.updateTicketStatus(zendesk_ticket_id, target_status);
     } catch (err) {
+      request.log.error({ err, zendesk_ticket_id }, "Zendesk force-sync failed");
       return reply.status(502).send({
-        error: `Zendesk sync failed: ${err instanceof Error ? err.message : String(err)}`,
+        error: "Zendesk did not accept the status change",
+        hint: `Quote correlation id ${request.correlationId} when investigating.`,
+        correlation_id: request.correlationId,
       });
     }
 
@@ -360,4 +336,177 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
         "Use /ops/action-executions/:id/reconcile if issue state also needs correction.",
     });
   });
+  /**
+   * POST /ops/issues/:issue_id/recompute-match
+   *
+   * Recompute the evidence match band from current evidence. Read-only with
+   * respect to providers — it re-derives from what is already stored, so it is
+   * always safe to run.
+   */
+  app.post<{
+    Params: { issue_id: string };
+    Body: { reason?: string };
+  }>("/issues/:issue_id/recompute-match", async (request, reply) => {
+    const { tenantId } = request.auth;
+    const { issue_id } = request.params;
+
+    const match = await recomputeMatchForIssue(tenantId, issue_id);
+
+    if (!match) {
+      return reply.status(404).send({
+        error: "No evidence on file for this issue",
+        hint: "Nothing to match yet — refresh evidence first.",
+      });
+    }
+
+    await writeAuditEvent({
+      tenantId,
+      issueId: issue_id,
+      eventType: AuditEventType.EVIDENCE_MATCH_COMPUTED,
+      actorType: ActorType.OPERATOR,
+      actorId: request.auth.principalId,
+      matchAlgorithmVersion: "match_v1",
+      payload: {
+        match_band: match.band,
+        confidence_score: match.confidenceScore,
+        matched_fields: match.matchedFields,
+        reason: request.body?.reason ?? null,
+        correlation_id: request.correlationId,
+      },
+    });
+
+    await rebuildCardState(tenantId, issue_id);
+
+    return reply.send({
+      issue_id,
+      match_band: match.band,
+      confidence_score: match.confidenceScore,
+      matched_fields: match.matchedFields,
+      notes: match.notes,
+      correlation_id: request.correlationId,
+    });
+  });
+
+  /**
+   * GET /ops/audit/:issue_id
+   *
+   * The audit trail for one issue, oldest first. This export is the artifact
+   * the whole system exists to produce: every policy decision with its rule id
+   * and version, every execution transition, every operator intervention.
+   */
+  app.get<{
+    Params: { issue_id: string };
+    Querystring: { limit?: string };
+  }>("/audit/:issue_id", async (request, reply) => {
+    const { tenantId } = request.auth;
+    const limit = Math.min(parseInt(request.query.limit ?? "200", 10) || 200, 1000);
+
+    const result = await query(
+      `SELECT id, event_type, actor_type, actor_id, payload,
+              policy_rule_id, policy_version, normalizer_version,
+              match_algorithm_version, correlation_id, created_at
+         FROM audit_log
+        WHERE tenant_id = $1 AND issue_id = $2
+        ORDER BY created_at ASC
+        LIMIT $3`,
+      [tenantId, request.params.issue_id, limit]
+    );
+
+    return reply.send({
+      issue_id: request.params.issue_id,
+      event_count: result.rows.length,
+      events: result.rows,
+      correlation_id: request.correlationId,
+    });
+  });
+
+  /**
+   * GET /ops/action-executions
+   *
+   * Recent executions, filterable by status. The reconcile workflow starts
+   * here: list FAILED_TERMINAL, pick one, PATCH its reconciliation.
+   */
+  app.get<{
+    Querystring: { status?: string; limit?: string };
+  }>("/action-executions", async (request, reply) => {
+    const { tenantId } = request.auth;
+    const limit = Math.min(parseInt(request.query.limit ?? "50", 10) || 50, 500);
+    const status = request.query.status;
+
+    const result = await query(
+      `SELECT id, issue_id, action_type, requested_by_agent_id, status,
+              planned_state, attempt_count, error, policy_rule_id,
+              reconciled_at, reconciled_by, reconciliation_outcome,
+              created_at, completed_at
+         FROM action_executions
+        WHERE tenant_id = $1
+          AND ($2::text IS NULL OR status = $2)
+        ORDER BY created_at DESC
+        LIMIT $3`,
+      [tenantId, status ?? null, limit]
+    );
+
+    return reply.send({
+      executions: result.rows,
+      correlation_id: request.correlationId,
+    });
+  });
+
+  /**
+   * PATCH /ops/tenant-config
+   *
+   * Update this tenant's own config — the tenant is the credential's, never a
+   * path parameter. Changes are audited with before/after values, because a
+   * silent flip of approvals_enabled is exactly the kind of thing an audit
+   * trail exists to catch.
+   */
+  app.patch("/tenant-config", async (request, reply) => {
+    const { tenantId, principalId } = request.auth;
+    const changes = parseBody(tenantConfigBody, request.body);
+
+    const before = await query<Record<string, unknown>>(
+      `SELECT approvals_enabled, evidence_freshness_seconds,
+              refund_amount_tolerance_pct, reopen_gate_count,
+              manager_approval_threshold_cents
+         FROM tenant_config WHERE tenant_id = $1`,
+      [tenantId]
+    );
+    if (before.rows.length === 0) {
+      throw notFound("Tenant configuration not found");
+    }
+
+    const entries = Object.entries(changes);
+    const setClauses = entries
+      .map(([key], i) => `${key} = $${i + 2}`)
+      .join(", ");
+
+    const updated = await query<Record<string, unknown>>(
+      `UPDATE tenant_config
+          SET ${setClauses}, updated_at = now()
+        WHERE tenant_id = $1
+        RETURNING approvals_enabled, evidence_freshness_seconds,
+                  refund_amount_tolerance_pct, reopen_gate_count,
+                  manager_approval_threshold_cents`,
+      [tenantId, ...entries.map(([, value]) => value)]
+    );
+
+    await writeAuditEvent({
+      tenantId,
+      eventType: AuditEventType.TENANT_CONFIG_CHANGED,
+      actorType: ActorType.OPERATOR,
+      actorId: principalId,
+      payload: {
+        changed: changes,
+        before: before.rows[0],
+        after: updated.rows[0],
+        correlation_id: request.correlationId,
+      },
+    });
+
+    return reply.send({
+      config: updated.rows[0],
+      correlation_id: request.correlationId,
+    });
+  });
+
 }

@@ -12,60 +12,47 @@
 import { FastifyInstance } from "fastify";
 import { query } from "../db/pool";
 import { initiateAction } from "../services/actionService";
-import { ActionType } from "@iisl/shared";
+import { requireAuth } from "../middleware/auth";
+import { parseBody, notFound } from "../middleware/errors";
+import { initiateActionBody } from "../schemas";
 
 export async function actionsRoutes(app: FastifyInstance): Promise<void> {
+  app.addHook("onRequest", requireAuth("agent"));
+
   /**
    * POST /api/v1/actions
    * Initiate an agent action. Always runs policy evaluation first.
    */
-  app.post<{
-    Body: {
-      action_type: ActionType;
-      issue_id: string;
-      idempotency_key: string;
-      action_params: Record<string, unknown>;
-    };
-  }>("/", async (request, reply) => {
-    const tenantId = request.headers["x-tenant-id"] as string;
-    const agentId = request.headers["x-agent-id"] as string;
+  app.post("/", async (request, reply) => {
+    // Tenant and agent identity come from the credential, not the request.
+    const { tenantId, principalId: agentId } = request.auth;
 
-    if (!tenantId) return reply.status(401).send({ error: "x-tenant-id required" });
-    if (!agentId) return reply.status(401).send({ error: "x-agent-id required" });
+    const { action_type, issue_id, idempotency_key, action_params } = parseBody(
+      initiateActionBody,
+      request.body
+    );
 
-    const { action_type, issue_id, idempotency_key, action_params } =
-      request.body;
+    const result = await initiateAction({
+      tenantId,
+      issueId: issue_id,
+      actionType: action_type,
+      agentId,
+      idempotencyKey: idempotency_key,
+      actionParams: action_params,
+    });
 
-    if (!action_type || !issue_id || !idempotency_key) {
-      return reply.status(400).send({
-        error: "action_type, issue_id, and idempotency_key are required",
-      });
-    }
-
-    try {
-      const result = await initiateAction({
-        tenantId,
-        issueId: issue_id,
-        actionType: action_type,
-        agentId,
-        idempotencyKey: idempotency_key,
-        actionParams: action_params ?? {},
-      });
-
-      return reply.status(200).send({
+    return reply.status(200).send({
         outcome: result.outcome,
+        // True when this key was already used and the original execution was
+        // returned rather than a second side effect being queued.
+        idempotent_replay: result.isReplay ?? false,
         action_execution_id: result.actionExecutionId ?? null,
         approval_request_id: result.approvalRequestId ?? null,
         policy_rule_id: result.policyRuleId,
         deny_reason: result.denyReason ?? null,
         unblock_path: result.unblockPath ?? null,
-        correlation_id: request.correlationId,
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      app.log.error({ err, tenantId, issue_id }, "Action initiation failed");
-      return reply.status(500).send({ error: msg });
-    }
+      correlation_id: request.correlationId,
+    });
   });
 
   /**
@@ -75,9 +62,7 @@ export async function actionsRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { execution_id: string } }>(
     "/:execution_id",
     async (request, reply) => {
-      const tenantId = request.headers["x-tenant-id"] as string;
-      if (!tenantId) return reply.status(401).send({ error: "x-tenant-id required" });
-
+      const { tenantId } = request.auth;
       const { execution_id } = request.params;
 
       const result = await query<ExecutionRow>(
@@ -93,7 +78,7 @@ export async function actionsRoutes(app: FastifyInstance): Promise<void> {
       );
 
       if (result.rows.length === 0) {
-        return reply.status(404).send({ error: "Execution not found" });
+        throw notFound("Execution not found");
       }
 
       const row = result.rows[0];
