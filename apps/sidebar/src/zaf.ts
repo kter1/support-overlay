@@ -15,8 +15,15 @@
  *     demo on localhost; never for a real install, which is why this mode is
  *     labelled in the UI.
  *
- * ZAF's SDK is loaded from Zendesk's CDN by index.html and appears as a global.
- * Its absence is how we detect standalone mode.
+ * Detecting which mode we are in is not "is the SDK loaded?". index.html pulls
+ * the SDK from Zendesk's *public* CDN, so the global is defined in any browser
+ * with network access — including a plain localhost tab. Keying off it alone
+ * sends the local demo down the embedded path, where it asks a parent frame
+ * that does not exist for a ticket and reports that it cannot read one.
+ *
+ * A Zendesk app is always an iframe served by Zendesk, so being a top-level
+ * window is proof we are not installed. That check costs nothing and does not
+ * depend on the network, which the SDK's presence does.
  */
 
 export interface ZafContext {
@@ -56,12 +63,31 @@ export function isEmbedded(): boolean {
 }
 
 /**
- * Initialise ZAF if the SDK is present. Safe to call in standalone mode, where
- * it simply reports that we are not embedded.
+ * Whether this document is running inside a frame.
+ *
+ * Cross-origin access to `window.top` throws in some browsers, and a throw
+ * means there *is* a foreign parent — so treat it as framed rather than
+ * letting the exception escape.
+ */
+function isFramed(): boolean {
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Initialise ZAF if we are actually installed in Zendesk. Safe to call in
+ * standalone mode, where it simply reports that we are not embedded.
  */
 export function initZaf(): boolean {
   if (client) return true;
   if (typeof window === "undefined" || !window.ZAFClient) return false;
+
+  // The SDK loads from a public CDN, so its presence proves nothing about
+  // where we are running. Only a framed document can be a Zendesk app.
+  if (!isFramed()) return false;
 
   try {
     client = window.ZAFClient.init();
@@ -97,13 +123,38 @@ export function onTicketSwitch(handler: () => void): void {
   }
 }
 
+/**
+ * How long to wait for ZAF to answer before giving up.
+ *
+ * ZAF calls resolve over postMessage. If nothing is listening the promise
+ * never settles — and an unsettled promise renders as a permanently blank
+ * panel with no error, which is the least diagnosable failure the app has.
+ * A bounded wait turns that into a message someone can act on.
+ */
+const ZAF_TIMEOUT_MS = 5000;
+
+function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`Zendesk did not respond to ${label} in time`)),
+        ZAF_TIMEOUT_MS
+      )
+    ),
+  ]);
+}
+
 /** Read ticket, agent, and account identity from ZAF. */
 export async function getContext(): Promise<ZafContext | null> {
   if (!client) return null;
 
   const [data, context] = await Promise.all([
-    client.get(["ticket.id", "currentUser.id", "currentUser.name"]),
-    client.context(),
+    withTimeout(
+      client.get(["ticket.id", "currentUser.id", "currentUser.name"]),
+      "a ticket lookup"
+    ),
+    withTimeout(client.context(), "a context request"),
   ]);
 
   const ticketId = data["ticket.id"];
