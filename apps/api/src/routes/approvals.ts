@@ -22,8 +22,8 @@ import { query, withTransaction } from "../db/pool";
 import { completeApprovalAndEnqueue } from "../services/actionService";
 import { writeAuditEventTx, AuditEventType } from "../services/audit";
 import { requireAuth, isManager } from "../middleware/auth";
-import { parseBody, notFound, forbidden, conflict } from "../middleware/errors";
-import { grantApprovalBody, denyApprovalBody } from "../schemas";
+import { parseBody, parseParams, notFound, forbidden, conflict } from "../middleware/errors";
+import { grantApprovalBody, denyApprovalBody, approvalIdParam } from "../schemas";
 import { ActorType } from "@iisl/shared";
 
 async function approvalsEnabled(tenantId: string): Promise<boolean> {
@@ -51,7 +51,7 @@ export async function approvalRoutes(app: FastifyInstance): Promise<void> {
            FROM approval_requests ar
            LEFT JOIN action_executions ae ON ae.id = ar.linked_action_execution_id
           WHERE ar.id = $1 AND ar.tenant_id = $2`,
-        [request.params.approval_id, tenantId]
+        [parseParams(approvalIdParam, request.params).approval_id, tenantId]
       );
 
       if (result.rows.length === 0) {
@@ -111,7 +111,7 @@ export async function approvalRoutes(app: FastifyInstance): Promise<void> {
     try {
       const executionId = await completeApprovalAndEnqueue(
         tenantId,
-        request.params.approval_id,
+        parseParams(approvalIdParam, request.params).approval_id,
         principalId,
         notes
       );
@@ -162,7 +162,12 @@ export async function approvalRoutes(app: FastifyInstance): Promise<void> {
                   updated_at = now()
             WHERE id = $1 AND tenant_id = $4 AND status = 'PENDING'
             RETURNING issue_id`,
-          [request.params.approval_id, principalId, reason ?? null, tenantId]
+          [
+            parseParams(approvalIdParam, request.params).approval_id,
+            principalId,
+            reason ?? null,
+            tenantId,
+          ]
         );
 
         if (result.rows.length === 0) {
@@ -176,7 +181,7 @@ export async function approvalRoutes(app: FastifyInstance): Promise<void> {
           actorType: ActorType.OPERATOR,
           actorId: principalId,
           payload: {
-            approval_request_id: request.params.approval_id,
+            approval_request_id: parseParams(approvalIdParam, request.params).approval_id,
             reason,
           },
         });

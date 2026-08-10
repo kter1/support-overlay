@@ -84,3 +84,9 @@ export const tenantConfigBody = z
   .refine((value) => Object.keys(value).length > 0, {
     message: "supply at least one setting to change",
   });
+
+/** Path parameters that must be UUIDs before they reach the database. */
+export const issueIdParam = z.object({ issue_id: uuid });
+export const executionIdParam = z.object({ execution_id: uuid });
+export const eventIdParam = z.object({ event_id: uuid });
+export const approvalIdParam = z.object({ approval_id: uuid });

@@ -458,8 +458,11 @@ async function upsertEvidence(
 /**
  * Record what was extracted, with provenance, before any lookup happens.
  *
- * This is the audit answer to "why did you look up that charge?" — the trail
- * shows the exact sentence the reference came from.
+ * Written twice, on purpose. `issue_context` is the read model the card and the
+ * history assembler query — one current row, replaced on re-ingestion.
+ * `audit_log` is the append-only answer to "why did you look up that charge?",
+ * and it must keep every earlier extraction even when a later one overwrites
+ * the current view.
  */
 async function recordExtraction(
   tenantId: string,
@@ -467,6 +470,48 @@ async function recordExtraction(
   ticketId: string,
   context: ConversationContext
 ): Promise<void> {
+  const highlights = context.highlights.map((signal) => ({
+    kind: signal.kind,
+    display: signal.display,
+    confidence: signal.confidence,
+    author_role: signal.authorRole,
+    observed_at: signal.observedAt,
+    source_id: signal.provenance.sourceId,
+    source_kind: signal.provenance.sourceKind,
+    excerpt: signal.provenance.excerpt,
+    rule: signal.provenance.rule,
+  }));
+
+  await query(
+    `INSERT INTO issue_context
+       (tenant_id, issue_id, extractor_version, payment_reference,
+        order_reference, claimed_amount_cents, claimed_currency, primary_ask,
+        highlights, message_count, extracted_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+     ON CONFLICT (tenant_id, issue_id) DO UPDATE SET
+       extractor_version    = EXCLUDED.extractor_version,
+       payment_reference    = EXCLUDED.payment_reference,
+       order_reference      = EXCLUDED.order_reference,
+       claimed_amount_cents = EXCLUDED.claimed_amount_cents,
+       claimed_currency     = EXCLUDED.claimed_currency,
+       primary_ask          = EXCLUDED.primary_ask,
+       highlights           = EXCLUDED.highlights,
+       message_count        = EXCLUDED.message_count,
+       extracted_at         = now()`,
+    [
+      tenantId,
+      issueId,
+      context.extractorVersion,
+      context.leads.paymentReference,
+      context.leads.orderReference,
+      context.leads.claimedAmountCents,
+      context.leads.claimedCurrency ?? null,
+      context.leads.primaryAsk?.value.ask ?? null,
+      JSON.stringify(highlights),
+      context.messageCount,
+    ]
+  );
+
   await writeAuditEvent(tenantId, issueId, {
     eventType: AuditEventType.CONTEXT_EXTRACTED,
     payload: {

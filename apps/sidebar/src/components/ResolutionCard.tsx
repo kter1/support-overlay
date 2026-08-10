@@ -17,6 +17,8 @@ import EvidencePanel from "./EvidencePanel";
 import ActionPanel from "./ActionPanel";
 import StatusBadge from "./StatusBadge";
 import DegradedBanner from "./DegradedBanner";
+import ContextPanel from "./ContextPanel";
+import HistoryPanel, { HistoryNotices } from "./HistoryPanel";
 import { useCardData } from "../hooks/useCardData";
 
 interface ResolutionCardProps {
@@ -76,11 +78,18 @@ export default function ResolutionCard({
 
   if (!card) return null;
 
+  // A prior refund on this same order is not a happy path, whatever the match
+  // score says: the agent has a decision to make before they click anything.
+  const hasCriticalHistory = card.customerHistory.notices.some(
+    (n) => n.severity === "critical"
+  );
+
   const isHappyPath =
     card.matchBand === "HIGH" &&
     !card.isSourceUnavailable &&
     card.freshnessStatus === "FRESH" &&
-    !card.pendingActionExecutionId;
+    !card.pendingActionExecutionId &&
+    !hasCriticalHistory;
 
   return (
     <div style={styles.container}>
@@ -133,6 +142,15 @@ export default function ResolutionCard({
         />
       )}
 
+      {/* ─── What the customer said ─────────────────────────────────────────── */}
+      {card.context && <ContextPanel context={card.context} />}
+
+      {/*
+        History warnings sit directly above the buttons. Below them they would
+        be read after the click, which is the same as not showing them.
+      */}
+      <HistoryNotices history={card.customerHistory} />
+
       {/* ─── Action Panel (primary CTA) ─────────────────────────────────────── */}
       <ActionPanel
         card={card}
@@ -147,6 +165,9 @@ export default function ResolutionCard({
           {lastActionResult}
         </div>
       )}
+
+      {/* ─── Previous interactions (collapsed) ──────────────────────────────── */}
+      <HistoryPanel history={card.customerHistory} />
 
       {/* ─── Progressive Disclosure — Details ───────────────────────────────── */}
       {!isHappyPath && (

@@ -233,4 +233,101 @@ describe("webhook signature verification", () => {
     expect(result.rows).toHaveLength(1);
     expect(await eventStatus("evt_dupe")).toBe("DUPLICATE");
   });
+
+  // ─── Issue identity, as written from a ticket ──────────────────────────────
+  //
+  // These two fields feed customer history, and both have a failure mode that
+  // is invisible on the ticket that caused it and only shows up later, on a
+  // different ticket, as a wrong statement about a real customer.
+
+  describe("issue identity from a ticket", () => {
+    async function postTicket(ticket: Record<string, unknown>) {
+      return app.inject({
+        method: "POST",
+        url: "/webhooks/fixture",
+        headers: {
+          authorization: `Bearer ${WEBHOOK_TOKEN}`,
+          "content-type": "application/json",
+        },
+        payload: JSON.stringify({
+          source_system: "zendesk",
+          event_type: "ticket.created",
+          payload: { tags: ["refund"], ...ticket },
+        }),
+      });
+    }
+
+    async function issueFor(ticketId: string) {
+      const result = await db.driver.query<{
+        customer_id: string | null;
+        opened_at: string;
+        created_at: string;
+      }>(
+        `SELECT i.customer_id, i.opened_at, i.created_at
+           FROM issues i
+           JOIN issue_tickets t ON t.issue_id = i.id
+          WHERE t.zendesk_ticket_id = $1`,
+        [ticketId]
+      );
+      return result.rows[0] ?? null;
+    }
+
+    it("dates the issue from when the customer wrote in", async () => {
+      await postTicket({
+        id: "70001",
+        subject: "Refund please",
+        description: "refund for order #1001",
+        requester_id: 5150,
+        created_at: "2026-01-16T10:00:00Z",
+      });
+
+      const issue = await issueFor("70001");
+      expect(issue).not.toBeNull();
+      // Not the insert time: history shows this date next to a refund amount.
+      expect(new Date(issue!.opened_at).toISOString()).toBe(
+        "2026-01-16T10:00:00.000Z"
+      );
+    });
+
+    it("falls back to now rather than trusting an unusable timestamp", async () => {
+      const before = Date.now() - 1000;
+
+      await postTicket({
+        id: "70002",
+        subject: "Refund please",
+        description: "refund for order #1001",
+        requester_id: 5151,
+        created_at: "not a date",
+      });
+
+      const issue = await issueFor("70002");
+      expect(new Date(issue!.opened_at).getTime()).toBeGreaterThanOrEqual(before);
+    });
+
+    it("rejects a far-future timestamp that would sort above every real issue", async () => {
+      await postTicket({
+        id: "70003",
+        subject: "Refund please",
+        description: "refund for order #1001",
+        requester_id: 5152,
+        created_at: "2099-01-01T00:00:00Z",
+      });
+
+      const issue = await issueFor("70003");
+      expect(new Date(issue!.opened_at).getFullYear()).toBeLessThan(2099);
+    });
+
+    it("stores no customer id rather than an empty one", async () => {
+      // "" is a value, and every anonymous ticket would share it — which would
+      // show one customer's refund history to another.
+      await postTicket({
+        id: "70004",
+        subject: "Refund please",
+        description: "refund for order #1001",
+      });
+
+      const issue = await issueFor("70004");
+      expect(issue!.customer_id).toBeNull();
+    });
+  });
 });

@@ -17,12 +17,15 @@ import { query, withTransaction } from "../db/pool";
 import { writeAuditEvent, writeAuditEventTx, AuditEventType } from "../services/audit";
 import { ZendeskAdapter } from "@iisl/connectors";
 import { requireAuth } from "../middleware/auth";
-import { parseBody, notFound } from "../middleware/errors";
+import { parseBody, parseParams, notFound } from "../middleware/errors";
 import {
   reconcileBody,
   operatorRepairBody,
   syncZendeskBody,
   tenantConfigBody,
+  issueIdParam,
+  executionIdParam,
+  eventIdParam,
 } from "../schemas";
 import { recomputeMatchForIssue } from "../services/matching";
 import { ingestTicketContext } from "../services/ingestion";
@@ -47,7 +50,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
   }>("/issues/:issue_id/rebuild-card-state", async (request, reply) => {
     const { tenantId } = request.auth;
 
-    const { issue_id } = request.params;
+    const { issue_id } = parseParams(issueIdParam, request.params);
     const { reason } = parseBody(operatorRepairBody, request.body);
 
     await withTransaction(async (client) => {
@@ -124,7 +127,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
   }>("/inbound-events/:event_id/replay", async (request, reply) => {
     const { tenantId } = request.auth;
 
-    const { event_id } = request.params;
+    const { event_id } = parseParams(eventIdParam, request.params);
     const { reason } = parseBody(operatorRepairBody, request.body);
 
     const result = await query<{ id: string; status: string; source_system: string }>(
@@ -206,7 +209,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
   }>("/action-executions/:execution_id/reconcile", async (request, reply) => {
     const { tenantId } = request.auth;
 
-    const { execution_id } = request.params;
+    const { execution_id } = parseParams(executionIdParam, request.params);
     const {
       external_side_effect_status,
       investigation_notes,
@@ -280,7 +283,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
   }>("/issues/:issue_id/sync-zendesk", async (request, reply) => {
     const { tenantId } = request.auth;
 
-    const { issue_id } = request.params;
+    const { issue_id } = parseParams(issueIdParam, request.params);
     const { reason, target_status } = parseBody(syncZendeskBody, request.body);
 
     // Get primary ticket ID
@@ -349,7 +352,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
     Body: { reason?: string };
   }>("/issues/:issue_id/recompute-match", async (request, reply) => {
     const { tenantId } = request.auth;
-    const { issue_id } = request.params;
+    const { issue_id } = parseParams(issueIdParam, request.params);
 
     const match = await recomputeMatchForIssue(tenantId, issue_id);
 
@@ -410,11 +413,11 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
         WHERE tenant_id = $1 AND issue_id = $2
         ORDER BY created_at ASC
         LIMIT $3`,
-      [tenantId, request.params.issue_id, limit]
+      [tenantId, parseParams(issueIdParam, request.params).issue_id, limit]
     );
 
     return reply.send({
-      issue_id: request.params.issue_id,
+      issue_id: parseParams(issueIdParam, request.params).issue_id,
       event_count: result.rows.length,
       events: result.rows,
       correlation_id: request.correlationId,
@@ -523,7 +526,7 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
     Body: { reason?: string };
   }>("/issues/:issue_id/refresh-evidence", async (request, reply) => {
     const { tenantId } = request.auth;
-    const { issue_id } = request.params;
+    const { issue_id } = parseParams(issueIdParam, request.params);
     const { reason } = parseBody(operatorRepairBody, request.body);
 
     const ticket = await query<{ zendesk_ticket_id: string }>(

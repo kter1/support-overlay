@@ -31,9 +31,24 @@ type LoadState =
   | { status: "standalone" }
   | { status: "error"; message: string };
 
+/**
+ * Standalone only: `?ticket=12345` opens a specific ticket instead of one of
+ * the canned scenarios, so a real ingested ticket can be inspected without
+ * being added to the picker. Ignored when embedded — there, the ticket always
+ * comes from ZAF, and letting a URL override it would show an agent a card for
+ * a ticket they are not looking at.
+ */
+function ticketFromUrl(): string | null {
+  if (typeof window === "undefined") return null;
+  const requested = new URLSearchParams(window.location.search).get("ticket");
+  return requested && /^[A-Za-z0-9_-]{1,64}$/.test(requested) ? requested : null;
+}
+
 export default function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
-  const [selectedTicket, setSelectedTicket] = useState("10001");
+  const [selectedTicket, setSelectedTicket] = useState(
+    () => ticketFromUrl() ?? "10001"
+  );
 
   useEffect(() => {
     let cancelled = false;

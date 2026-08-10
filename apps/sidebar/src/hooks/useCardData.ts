@@ -26,7 +26,65 @@ interface CardData {
   softWarnings: string[];
   correlationId: string;
   lastRebuiltAt: string;
+  /** What the extractor read out of the ticket thread. Null before ingestion. */
+  context: TicketContext | null;
+  customerHistory: CustomerHistory;
 }
+
+/** One point of importance, with the text it was taken from. */
+export interface ContextHighlight {
+  kind: string;
+  display: string;
+  confidence: number;
+  authorRole: string;
+  sourceKind: string;
+  excerpt: string;
+}
+
+export interface TicketContext {
+  primaryAsk: string | null;
+  paymentReference: string | null;
+  orderReference: string | null;
+  claimedAmountCents: number | null;
+  claimedCurrency: string | null;
+  messageCount: number;
+  highlights: ContextHighlight[];
+}
+
+export interface HistoryNotice {
+  severity: "critical" | "warning" | "info";
+  code: string;
+  message: string;
+}
+
+export interface PriorInteraction {
+  zendeskTicketId: string | null;
+  openedAt: string;
+  state: string;
+  primaryAsk: string | null;
+  orderReference: string | null;
+  matchBand: string | null;
+  refundedAmountCents: number | null;
+  refundCurrency: string | null;
+  refundStatus: string | null;
+  sameSubject: boolean;
+  actionsTaken: string[];
+}
+
+export interface CustomerHistory {
+  priorIssueCount: number;
+  truncated: boolean;
+  notices: HistoryNotice[];
+  priorInteractions: PriorInteraction[];
+}
+
+/** An older API, or a card fetched before ingestion, simply has no history. */
+const EMPTY_HISTORY: CustomerHistory = {
+  priorIssueCount: 0,
+  truncated: false,
+  notices: [],
+  priorInteractions: [],
+};
 
 interface AvailableCta {
   actionType: string;
@@ -84,6 +142,40 @@ interface ApiCardResponse {
     status?: string | null;
     execution_id?: string | null;
     approval_id?: string | null;
+  } | null;
+  context?: {
+    primary_ask?: string | null;
+    payment_reference?: string | null;
+    order_reference?: string | null;
+    claimed_amount_cents?: number | null;
+    claimed_currency?: string | null;
+    message_count?: number | null;
+    highlights?: Array<{
+      kind?: string;
+      display?: string;
+      confidence?: number;
+      author_role?: string;
+      source_kind?: string;
+      excerpt?: string;
+    }>;
+  } | null;
+  customer_history?: {
+    prior_issue_count?: number;
+    truncated?: boolean;
+    notices?: Array<{ severity?: string; code?: string; message?: string }>;
+    prior_interactions?: Array<{
+      zendesk_ticket_id?: string | null;
+      opened_at?: string;
+      state?: string;
+      primary_ask?: string | null;
+      order_reference?: string | null;
+      match_band?: string | null;
+      refunded_amount_cents?: number | null;
+      refund_currency?: string | null;
+      refund_status?: string | null;
+      same_subject?: boolean;
+      actions_taken?: string[];
+    }>;
   } | null;
 }
 
@@ -231,6 +323,74 @@ function buildEvidenceSummary(
   return Object.keys(summary).length > 0 ? summary : null;
 }
 
+function normalizeContext(api: ApiCardResponse): TicketContext | null {
+  const raw = api.context;
+  if (!raw) return null;
+
+  return {
+    primaryAsk: asString(raw.primary_ask),
+    paymentReference: asString(raw.payment_reference),
+    orderReference: asString(raw.order_reference),
+    claimedAmountCents: asNumber(raw.claimed_amount_cents),
+    claimedCurrency: asString(raw.claimed_currency),
+    messageCount: asNumber(raw.message_count) ?? 0,
+    // A highlight without its excerpt is dropped: the whole point is that the
+    // agent can see the sentence it came from, and a bare claim invites trust
+    // it hasn't earned.
+    highlights: (raw.highlights ?? []).flatMap((h) => {
+      const display = asString(h.display);
+      const excerpt = asString(h.excerpt);
+      if (!display || !excerpt) return [];
+
+      return [
+        {
+          kind: h.kind ?? "unknown",
+          display,
+          confidence: asNumber(h.confidence) ?? 0,
+          authorRole: h.author_role ?? "unknown",
+          sourceKind: h.source_kind ?? "comment",
+          excerpt,
+        },
+      ];
+    }),
+  };
+}
+
+const NOTICE_SEVERITIES = new Set(["critical", "warning", "info"]);
+
+function normalizeHistory(api: ApiCardResponse): CustomerHistory {
+  const raw = api.customer_history;
+  if (!raw) return EMPTY_HISTORY;
+
+  return {
+    priorIssueCount: asNumber(raw.prior_issue_count) ?? 0,
+    truncated: raw.truncated === true,
+    notices: (raw.notices ?? []).flatMap((n) => {
+      const message = asString(n.message);
+      if (!message) return [];
+      // An unrecognized severity renders as info rather than as an alarm: a new
+      // server-side level must not silently look like a critical one.
+      const severity = NOTICE_SEVERITIES.has(n.severity ?? "")
+        ? (n.severity as HistoryNotice["severity"])
+        : "info";
+      return [{ severity, code: n.code ?? "unknown", message }];
+    }),
+    priorInteractions: (raw.prior_interactions ?? []).map((i) => ({
+      zendeskTicketId: asString(i.zendesk_ticket_id),
+      openedAt: i.opened_at ?? "",
+      state: i.state ?? "OPEN",
+      primaryAsk: asString(i.primary_ask),
+      orderReference: asString(i.order_reference),
+      matchBand: asString(i.match_band),
+      refundedAmountCents: asNumber(i.refunded_amount_cents),
+      refundCurrency: asString(i.refund_currency),
+      refundStatus: asString(i.refund_status),
+      sameSubject: i.same_subject === true,
+      actionsTaken: Array.isArray(i.actions_taken) ? i.actions_taken : [],
+    })),
+  };
+}
+
 function normalizeCardResponse(api: ApiCardResponse): CardData {
   const issueId = asString(api.issueId ?? api.issue_id);
   const zendeskTicketId = asString(api.zendeskTicketId ?? api.zendesk_ticket_id);
@@ -312,6 +472,8 @@ function normalizeCardResponse(api: ApiCardResponse): CardData {
     softWarnings,
     correlationId: asString(api.correlationId ?? api.correlation_id) ?? "",
     lastRebuiltAt: asString(api.lastRebuiltAt ?? api.last_rebuilt_at) ?? "",
+    context: normalizeContext(api),
+    customerHistory: normalizeHistory(api),
   };
 }
 

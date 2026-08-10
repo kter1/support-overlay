@@ -220,12 +220,23 @@ export async function createTenant(
 export async function createIssue(
   db: TestDb,
   tenantId: string,
-  opts: { state?: string; ticketId?: string } = {}
+  opts: {
+    state?: string;
+    ticketId?: string;
+    /** Pass null explicitly to model a ticket with no identifiable requester. */
+    customerId?: string | null;
+    createdAt?: Date;
+  } = {}
 ): Promise<string> {
   const result = await db.driver.query<{ id: string }>(
-    `INSERT INTO issues (tenant_id, state, customer_id)
-     VALUES ($1, $2, $3) RETURNING id`,
-    [tenantId, opts.state ?? "OPEN", "cus_test"]
+    `INSERT INTO issues (tenant_id, state, customer_id, created_at, opened_at)
+     VALUES ($1, $2, $3, COALESCE($4, now()), COALESCE($4, now())) RETURNING id`,
+    [
+      tenantId,
+      opts.state ?? "OPEN",
+      opts.customerId === undefined ? "cus_test" : opts.customerId,
+      opts.createdAt ?? null,
+    ]
   );
   const issueId = result.rows[0].id;
 

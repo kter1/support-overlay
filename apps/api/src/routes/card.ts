@@ -13,6 +13,8 @@ import { query } from "../db/pool";
 import { computeFreshness } from "../services/freshness";
 import { requireAuth } from "../middleware/auth";
 import { notFound } from "../middleware/errors";
+import { assembleCustomerHistory } from "../services/history";
+import { loadIssueContext } from "../services/context";
 
 export async function cardRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("onRequest", requireAuth("agent"));
@@ -77,6 +79,14 @@ export async function cardRoutes(app: FastifyInstance): Promise<void> {
       const hasPendingAction =
         !!pendingExecutionId || !!pendingApprovalId || !!pendingActionType;
 
+      // What the customer actually said, and whether we have been here before
+      // with them. Both are reads against indexed keys and are fetched together
+      // so the card is one round trip's worth of latency, not three.
+      const [context, history] = await Promise.all([
+        loadIssueContext(tenantId, card.issue_id),
+        assembleCustomerHistory(tenantId, card.issue_id),
+      ]);
+
       // Emit card_loaded audit event for bypass detection
       await query(
         `INSERT INTO audit_log
@@ -123,6 +133,48 @@ export async function cardRoutes(app: FastifyInstance): Promise<void> {
           : null,
         evidence_fetched_at: card.evidence_fetched_at,
         evidence_summary: card.evidence_summary_unified,
+        context: context
+          ? {
+              primary_ask: context.primaryAsk,
+              payment_reference: context.paymentReference,
+              order_reference: context.orderReference,
+              claimed_amount_cents: context.claimedAmountCents,
+              claimed_currency: context.claimedCurrency,
+              message_count: context.messageCount,
+              extractor_version: context.extractorVersion,
+              extracted_at: context.extractedAt,
+              highlights: context.highlights.map((h) => ({
+                kind: h.kind,
+                display: h.display,
+                confidence: h.confidence,
+                author_role: h.authorRole,
+                source_kind: h.sourceKind,
+                excerpt: h.excerpt,
+              })),
+            }
+          : null,
+        customer_history: {
+          prior_issue_count: history.priorIssueCount,
+          truncated: history.truncated,
+          notices: history.notices.map((n) => ({
+            severity: n.severity,
+            code: n.code,
+            message: n.message,
+          })),
+          prior_interactions: history.priorInteractions.map((i) => ({
+            zendesk_ticket_id: i.zendeskTicketId,
+            opened_at: i.openedAt,
+            state: i.state,
+            primary_ask: i.primaryAsk,
+            order_reference: i.orderReference,
+            match_band: i.matchBand,
+            refunded_amount_cents: i.refundedAmountCents,
+            refund_currency: i.refundCurrency,
+            refund_status: i.refundStatus,
+            same_subject: i.sameSubject,
+            actions_taken: i.actionsTaken.map((a) => a.actionType),
+          })),
+        },
         pending_action_execution_id: pendingExecutionId,
         pending_approval_request_id: pendingApprovalId,
         last_action_type: card.last_action_type_unified,

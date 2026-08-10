@@ -26,6 +26,7 @@ import { writeAuditEventTx, AuditEventType } from "../services/audit";
 import { requireAuth } from "../middleware/auth";
 import { recomputeMatchForIssue } from "../services/matching";
 import { ingestTicketContext } from "../services/ingestion";
+import { simulatorStore } from "@iisl/connectors";
 import { ActorType } from "@iisl/shared";
 
 /** Stripe's recommended tolerance for replayed timestamps. */
@@ -129,6 +130,14 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
     const { source_system, event_type, payload } = request.body;
     const externalEventId = `fixture_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
+    // Give the Zendesk simulator the thread this ticket would have, so the
+    // ingestion pipeline reads a real conversation rather than finding nothing.
+    // Against a live Zendesk this is unnecessary — the adapter fetches the
+    // actual thread — but locally the fixture *is* the source of truth.
+    if (source_system === "zendesk" && payload?.id) {
+      seedSimulatedConversation(payload);
+    }
+
     await ingestEvent({
       tenantId,
       sourceSystem: source_system,
@@ -190,10 +199,70 @@ async function drainPendingIngestion(): Promise<void> {
   }
 }
 
+/**
+ * Build a simulator thread from a fixture ticket payload.
+ *
+ * A fixture carries subject, description, and optionally a `comments` array.
+ * Turning it into a conversation lets the local demo exercise the real
+ * ingestion path — extraction, provider lookup, matching — instead of stopping
+ * at "no thread found".
+ */
+/**
+ * A provider timestamp, or null when it cannot be trusted.
+ *
+ * Returns null rather than a guess: the caller falls back to now(), and a
+ * slightly-late timestamp is a much smaller lie than a confidently wrong date
+ * rendered next to a refund amount.
+ */
+function parseTicketTimestamp(value: unknown): string | null {
+  if (typeof value !== "string" && typeof value !== "number") return null;
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  // A far-future timestamp means a broken clock or a bad feed, not a ticket
+  // from next year; it would sort above every real issue in the history list.
+  if (parsed.getTime() > Date.now() + 86_400_000) return null;
+
+  return parsed.toISOString();
+}
+
+function seedSimulatedConversation(payload: Record<string, unknown>): void {
+  const ticketId = String(payload.id);
+  const createdAt = String(payload.created_at ?? new Date().toISOString());
+
+  const rawComments = Array.isArray(payload.comments)
+    ? (payload.comments as Array<Record<string, unknown>>)
+    : [];
+
+  const messages = rawComments.map((comment, index) => ({
+    id: String(comment.id ?? `fixture-${index}`),
+    body: String(comment.body ?? ""),
+    createdAt: String(comment.created_at ?? createdAt),
+    authorRole: comment.author_role === "agent" ? ("agent" as const) : ("customer" as const),
+    isPublic: comment.public !== false,
+  }));
+
+  simulatorStore.seedConversation(ticketId, {
+    ticketId,
+    subject: String(payload.subject ?? ""),
+    description: String(payload.description ?? ""),
+    createdAt,
+    requesterId: payload.requester_id ? String(payload.requester_id) : null,
+    messages,
+  });
+}
+
 async function ingestEvent(input: IngestInput): Promise<void> {
   const payloadHash = createHash("sha256")
     .update(JSON.stringify(input.payload))
     .digest("hex");
+
+  // A handler may queue ingestion jobs mid-transaction (see handleTicketCreated).
+  // If the transaction then fails, those jobs name rows that were just rolled
+  // back — draining them would throw. Remember the queue length so a failure
+  // can discard exactly what this attempt added, not jobs from elsewhere.
+  const queuedBeforeThisAttempt = pendingIngestion.length;
 
   try {
     await withTransaction(async (client) => {
@@ -256,11 +325,18 @@ async function ingestEvent(input: IngestInput): Promise<void> {
       });
     });
   } catch (err) {
-    // On conflict or error — log but don't crash webhook endpoint
+    // The transaction rolled back, so any rows its handlers queued work for no
+    // longer exist. Discard exactly what this attempt added rather than
+    // ingesting against issue ids that were never committed.
+    pendingIngestion.length = queuedBeforeThisAttempt;
+
+    // Log but never crash the webhook endpoint: a provider retries on non-2xx,
+    // and a poison event would then retry forever.
     const errorMsg = err instanceof Error ? err.message : String(err);
     if (!errorMsg.includes("DUPLICATE")) {
       console.error("[webhook] Ingestion error:", errorMsg);
     }
+    return;
   }
 
   await drainPendingIngestion();
@@ -349,13 +425,20 @@ async function handleTicketCreated(
 
   // Create Issue
   const issueResult = await client.query<{ id: string }>(
-    `INSERT INTO issues (tenant_id, customer_id, customer_email, state, playbook_id)
-     VALUES ($1, $2, $3, 'OPEN', 'refund_v1')
+    `INSERT INTO issues
+       (tenant_id, customer_id, customer_email, state, playbook_id, opened_at)
+     VALUES ($1, $2, $3, 'OPEN', 'refund_v1', COALESCE($4, now()))
      RETURNING id`,
     [
       tenantId,
-      String(ticket.requester_id ?? ""),
-      String(ticket.email ?? ""),
+      // NULL, not "": an empty string is a value, and it would make every
+      // ticket with an unknown requester look like the same customer — which
+      // would then link strangers' histories to each other.
+      ticket.requester_id != null ? String(ticket.requester_id) : null,
+      ticket.email != null ? String(ticket.email) : null,
+      // When the customer wrote in, not when we processed it. An unparseable
+      // value falls back to now() rather than writing a wrong date.
+      parseTicketTimestamp(ticket.created_at),
     ]
   );
 
@@ -372,11 +455,14 @@ async function handleTicketCreated(
     [tenantId, issueId, ticketId]
   );
 
-  // Initialize card state
+  // Initialize card state. Conflict target must match the real constraint —
+  // issue_card_state is unique on (tenant_id, issue_id), not issue_id alone.
+  // A mismatched target makes Postgres reject the whole statement, which
+  // rolled back every ticket-creation transaction that reached this insert.
   await client.query(
     `INSERT INTO issue_card_state (tenant_id, issue_id, zendesk_ticket_id, issue_state)
      VALUES ($1, $2, $3, 'OPEN')
-     ON CONFLICT (issue_id) DO NOTHING`,
+     ON CONFLICT (tenant_id, issue_id) DO NOTHING`,
     [tenantId, issueId, ticketId]
   );
 

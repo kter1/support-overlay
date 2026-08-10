@@ -43,6 +43,16 @@ and the app has not been loaded in a live Zendesk instance.
   order evidence — identifier linkage, amount, currency, refund status, timing —
   and stores the band with the sentence that justifies it. Rule-based on
   purpose: a confidence score nobody can reconstruct is worse than none.
+- **Context extracted from the conversation.** Amounts, dates, order and payment
+  references, and what the customer is actually asking for are pulled from the
+  ticket thread, each carrying the span of text it came from. The card shows the
+  quote next to the claim, so a wrong reading is visibly wrong. Rule-based, not
+  an LLM: this text is untrusted input on a path that moves money.
+- **Customer history across tickets.** Before an agent refunds, the card says
+  whether this same order or charge was already refunded on another ticket —
+  the most common way a team pays twice for one purchase. Matched on identifiers
+  only, never on amount, and counted only when the provider confirmed the
+  refund.
 - **Table-driven policy** emitting `policy_rule_id` and `policy_version` on
   every evaluation, with approval lifecycle support.
 - **Token-derived tenancy.** Bearer credentials carry their tenant and role;

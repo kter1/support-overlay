@@ -50,6 +50,12 @@ export interface ConversationContext {
     purchaseDate: Date | null;
     primaryAsk: AskSignal | null;
   };
+  /**
+   * How many pieces of text were read. Distinguishes "we read the thread and it
+   * contained nothing useful" from "we never got the thread" — both otherwise
+   * produce an empty result.
+   */
+  messageCount: number;
   extractorVersion: string;
 }
 
@@ -108,6 +114,7 @@ export function readConversation(
       purchaseDate: best(dates, ordered)?.value.date ?? null,
       primaryAsk: best(asks, ordered) ?? null,
     },
+    messageCount: ordered.length,
     extractorVersion: EXTRACTOR_VERSION,
   };
 }

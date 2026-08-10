@@ -43,6 +43,25 @@ export const forbidden = (message: string, hint?: string) =>
   new ApiError(403, message, hint);
 
 /**
+ * Validate and narrow route parameters.
+ *
+ * Without this, a malformed id reaches Postgres and comes back as
+ * "invalid input syntax for type uuid", which is both a 500 for what is really
+ * a client mistake and a small leak of the storage layer.
+ */
+export function parseParams<S extends ZodTypeAny>(
+  schema: S,
+  params: unknown
+): z.infer<S> {
+  const result = schema.safeParse(params);
+  if (result.success) return result.data;
+
+  const error = new ApiError(400, "Request path is not valid");
+  (error as ApiError & { details?: unknown }).details = zodDetails(result.error);
+  throw error;
+}
+
+/**
  * Validate and narrow a request body. Throws an ApiError carrying field-level
  * detail, which is safe: it describes the caller's own input, not ours.
  */
