@@ -135,7 +135,20 @@ async function createServerDb(): Promise<TestDb> {
   const dbName = `overlay_test_${randomBytes(6).toString("hex")}`;
   const admin = new Pool({ connectionString: REAL_POSTGRES_URL });
 
-  await admin.query(`CREATE DATABASE ${dbName}`);
+  try {
+    await admin.query(`CREATE DATABASE ${dbName}`);
+  } catch (err) {
+    await admin.end().catch(() => undefined);
+    // Without this, an unreachable server surfaces as dozens of unrelated
+    // assertion failures across every suite instead of one clear cause.
+    throw new Error(
+      `TEST_DATABASE_URL is set but the server is unreachable, so no suite can ` +
+        `run: ${err instanceof Error ? err.message : String(err)}\n` +
+        `Start Postgres, or unset TEST_DATABASE_URL to fall back to PGlite ` +
+        `(which skips the concurrency suite).`
+    );
+  }
+
   await admin.end();
 
   const url = new URL(REAL_POSTGRES_URL);
