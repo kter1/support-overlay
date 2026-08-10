@@ -25,6 +25,7 @@ import {
   tenantConfigBody,
 } from "../schemas";
 import { recomputeMatchForIssue } from "../services/matching";
+import { ingestTicketContext } from "../services/ingestion";
 import { rebuildCardState } from "../workers/outboxWorker";
 import { ActorType } from "@iisl/shared";
 
@@ -505,6 +506,70 @@ export async function opsRoutes(app: FastifyInstance): Promise<void> {
 
     return reply.send({
       config: updated.rows[0],
+      correlation_id: request.correlationId,
+    });
+  });
+
+  /**
+   * POST /ops/issues/:issue_id/refresh-evidence
+   *
+   * Re-read the ticket thread and the provider records, then recompute the
+   * band. This is the recovery path when ingestion failed at ticket creation —
+   * a provider outage leaves an issue with no evidence, and this is how an
+   * operator fills it in without touching the database.
+   */
+  app.post<{
+    Params: { issue_id: string };
+    Body: { reason?: string };
+  }>("/issues/:issue_id/refresh-evidence", async (request, reply) => {
+    const { tenantId } = request.auth;
+    const { issue_id } = request.params;
+    const { reason } = parseBody(operatorRepairBody, request.body);
+
+    const ticket = await query<{ zendesk_ticket_id: string }>(
+      `SELECT zendesk_ticket_id FROM issue_tickets
+        WHERE tenant_id = $1 AND issue_id = $2 AND is_primary = true
+        LIMIT 1`,
+      [tenantId, issue_id]
+    );
+
+    if (ticket.rows.length === 0) {
+      throw notFound("No primary ticket is linked to this issue");
+    }
+
+    const result = await ingestTicketContext(
+      tenantId,
+      issue_id,
+      ticket.rows[0].zendesk_ticket_id
+    );
+
+    await writeAuditEvent({
+      tenantId,
+      issueId: issue_id,
+      eventType: AuditEventType.OPERATOR_REBUILD_CARD_STATE,
+      actorType: ActorType.OPERATOR,
+      actorId: request.auth.principalId,
+      payload: {
+        action: "refresh_evidence",
+        reason,
+        evidence_from: result.evidenceFrom,
+        unavailable: result.unavailable,
+        correlation_id: request.correlationId,
+      },
+    });
+
+    return reply.send({
+      issue_id,
+      evidence_from: result.evidenceFrom,
+      unavailable: result.unavailable,
+      match_band: result.matchBand,
+      confidence_score: result.confidenceScore,
+      highlights: result.context.highlights.map((signal) => ({
+        kind: signal.kind,
+        display: signal.display,
+        confidence: signal.confidence,
+        excerpt: signal.provenance.excerpt,
+      })),
       correlation_id: request.correlationId,
     });
   });

@@ -25,6 +25,7 @@ import { query, withTransaction } from "../db/pool";
 import { writeAuditEventTx, AuditEventType } from "../services/audit";
 import { requireAuth } from "../middleware/auth";
 import { recomputeMatchForIssue } from "../services/matching";
+import { ingestTicketContext } from "../services/ingestion";
 import { ActorType } from "@iisl/shared";
 
 /** Stripe's recommended tolerance for replayed timestamps. */
@@ -159,6 +160,36 @@ interface IngestInput {
   correlationId: string;
 }
 
+/**
+ * Ingestion work discovered inside a webhook transaction, run after it commits.
+ * Provider calls take seconds; holding a transaction open for them would pin a
+ * connection and risk the whole event failing over an unrelated outage.
+ */
+const pendingIngestion: Array<{
+  tenantId: string;
+  issueId: string;
+  ticketId: string;
+}> = [];
+
+async function drainPendingIngestion(): Promise<void> {
+  while (pendingIngestion.length > 0) {
+    const job = pendingIngestion.shift();
+    if (!job) break;
+
+    try {
+      await ingestTicketContext(job.tenantId, job.issueId, job.ticketId);
+    } catch (err) {
+      // A failed ingestion leaves the issue with no evidence, which the card
+      // renders as "no evidence yet" — correct, and recoverable by the operator
+      // refresh endpoint. It must never fail the inbound event.
+      console.error(
+        `[ingestion] Failed for issue ${job.issueId}:`,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+}
+
 async function ingestEvent(input: IngestInput): Promise<void> {
   const payloadHash = createHash("sha256")
     .update(JSON.stringify(input.payload))
@@ -231,6 +262,8 @@ async function ingestEvent(input: IngestInput): Promise<void> {
       console.error("[webhook] Ingestion error:", errorMsg);
     }
   }
+
+  await drainPendingIngestion();
 }
 
 // ─── Event routing ────────────────────────────────────────────────────────────
@@ -327,6 +360,11 @@ async function handleTicketCreated(
   );
 
   const issueId = issueResult.rows[0].id;
+
+  // Queue evidence acquisition. Deliberately after the transaction commits —
+  // provider calls are slow and must not hold a webhook transaction open, and a
+  // provider outage must not roll back a correctly-created issue.
+  pendingIngestion.push({ tenantId, issueId, ticketId });
 
   await client.query(
     `INSERT INTO issue_tickets (tenant_id, issue_id, zendesk_ticket_id, is_primary)

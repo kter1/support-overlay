@@ -318,6 +318,7 @@ export const AuditEventType = {
   ACTION_EXECUTION_RECONCILED: "action_execution_reconciled",
 
   // Evidence
+  CONTEXT_EXTRACTED: "context_extracted",
   EVIDENCE_FETCHED: "evidence_fetched",
   EVIDENCE_MATCH_COMPUTED: "evidence_match_computed",
   EVIDENCE_FETCH_FAILED: "evidence_fetch_failed",

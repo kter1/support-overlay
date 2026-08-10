@@ -5,7 +5,12 @@
  * so the outbox worker can apply the right retry policy per action. See
  * packages/shared for those error types.
  */
-export { ZendeskAdapter, simulatorStore } from "./zendesk/adapter";
+export {
+  ZendeskAdapter,
+  simulatorStore,
+  type TicketConversation,
+  type ConversationMessage,
+} from "./zendesk/adapter";
 export {
   StripeAdapter,
   stripeSimulator,

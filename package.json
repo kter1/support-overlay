@@ -13,7 +13,7 @@
     "demo:reset": "ts-node -P tsconfig.base.json scripts/demo-reset.ts",
     "demo:smoke": "ts-node -P tsconfig.base.json scripts/demo-smoke.ts",
     "doctor": "ts-node -P tsconfig.base.json scripts/doctor.ts",
-    "build:workspace-libs": "npm run build --workspace=packages/shared && npm run build --workspace=packages/matching && npm run build --workspace=packages/connectors && npm run build --workspace=packages/policy",
+    "build:workspace-libs": "npm run build --workspace=packages/shared && npm run build --workspace=packages/extraction && npm run build --workspace=packages/matching && npm run build --workspace=packages/connectors && npm run build --workspace=packages/policy",
     "dev": "npm run build:workspace-libs && concurrently --names api,worker,sidebar --prefix-colors cyan,yellow,green \"npm run dev --workspace=apps/api\" \"npm run dev:worker --workspace=apps/api\" \"npm run dev --workspace=apps/sidebar\"",
     "db:migrate": "ts-node -P tsconfig.base.json scripts/migrate.ts",
     "db:seed": "ts-node -P tsconfig.base.json scripts/seed.ts",

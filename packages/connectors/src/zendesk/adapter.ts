@@ -31,6 +31,27 @@ interface ZendeskComment {
   id: number;
   body: string;
   created_at: string;
+  author_id?: number;
+  public?: boolean;
+}
+
+/** One message in a ticket thread, with enough context to attribute it. */
+export interface ConversationMessage {
+  id: string;
+  body: string;
+  createdAt: string;
+  /** Customer text is a claim; agent text is record. The distinction matters. */
+  authorRole: "customer" | "agent";
+  isPublic: boolean;
+}
+
+export interface TicketConversation {
+  ticketId: string;
+  subject: string;
+  description: string;
+  createdAt: string;
+  requesterId: string | null;
+  messages: ConversationMessage[];
 }
 
 interface ZendeskTicket {
@@ -110,6 +131,67 @@ export class ZendeskAdapter {
 
     const data = (await response.json()) as { comment: { id: number } };
     return String(data.comment.id);
+  }
+
+  /**
+   * Fetch a ticket with its full comment thread.
+   *
+   * The extraction layer needs author role and timestamps, not just text: a
+   * refund amount stated by the customer is a claim to verify, the same number
+   * written by an agent is a restatement, and relative dates ("last Tuesday")
+   * only resolve against the message that contains them.
+   */
+  async getConversation(ticketId: string): Promise<TicketConversation | null> {
+    if (this.isSimulator) {
+      return simulatorStore.getConversation(ticketId);
+    }
+
+    const ticketResponse = await this.apiRequest(
+      "GET",
+      `/api/v2/tickets/${ticketId}.json`
+    );
+
+    if (ticketResponse.status === 404) return null;
+    this.assertOk(ticketResponse, `fetch ticket ${ticketId}`);
+
+    const ticketData = (await ticketResponse.json()) as {
+      ticket: ZendeskTicket & {
+        description?: string;
+        requester_id?: number;
+        created_at?: string;
+      };
+    };
+
+    const commentsResponse = await this.apiRequest(
+      "GET",
+      `/api/v2/tickets/${ticketId}/comments.json?sort_order=asc&per_page=100`
+    );
+    this.assertOk(commentsResponse, `fetch comments for ticket ${ticketId}`);
+
+    const commentsData = (await commentsResponse.json()) as {
+      comments: ZendeskComment[];
+    };
+
+    const requesterId = ticketData.ticket.requester_id ?? null;
+
+    return {
+      ticketId,
+      subject: ticketData.ticket.subject ?? "",
+      description: ticketData.ticket.description ?? "",
+      createdAt: ticketData.ticket.created_at ?? new Date().toISOString(),
+      requesterId: requesterId === null ? null : String(requesterId),
+      messages: commentsData.comments.map((comment) => ({
+        id: String(comment.id),
+        body: comment.body,
+        createdAt: comment.created_at,
+        // The requester is the customer; everyone else on the thread is staff.
+        authorRole:
+          requesterId !== null && comment.author_id === requesterId
+            ? "customer"
+            : "agent",
+        isPublic: comment.public !== false,
+      })),
+    };
   }
 
   async getRecentComments(ticketId: string): Promise<string[]> {
@@ -205,6 +287,7 @@ export class ZendeskAdapter {
 
 class ZendeskSimulatorStore {
   private tickets = new Map<string, { status: string; subject: string }>();
+  private conversations = new Map<string, TicketConversation>();
   private comments = new Map<string, Array<{ body: string; idempotencyKey: string }>>();
 
   seed(ticketId: string, status: string, subject: string): void {
@@ -239,6 +322,15 @@ class ZendeskSimulatorStore {
 
   getRecentComments(ticketId: string): string[] {
     return (this.comments.get(ticketId) ?? []).map((c) => c.body);
+  }
+
+  /** Seed a thread so the demo and tests have something to extract from. */
+  seedConversation(ticketId: string, conversation: TicketConversation): void {
+    this.conversations.set(ticketId, conversation);
+  }
+
+  getConversation(ticketId: string): TicketConversation | null {
+    return this.conversations.get(ticketId) ?? null;
   }
 
   getTicket(ticketId: string): ZendeskTicket | null {
