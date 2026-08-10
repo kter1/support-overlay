@@ -10,7 +10,7 @@
  * Cue phrases are recorded on the signal so an agent can see what triggered a
  * classification instead of being handed a label to trust.
  */
-import { AskKind, AskSignal, TextSource } from "./types";
+import { AskKind, AskSignal, TextSource, provenanceOf } from "./types";
 
 interface AskRule {
   ask: AskKind;
@@ -118,14 +118,8 @@ export function extractAsks(source: TextSource): AskSignal[] {
       confidence,
       authorRole: source.authorRole,
       observedAt: source.createdAt,
-      provenance: {
-        sourceId: source.id,
-        sourceKind: source.kind,
-        start: first.start,
-        end: first.end,
-        excerpt: first.cue,
-        rule: `ask_${rule.ask}`,
-      },
+      // Excerpt comes from the offsets, never alongside them.
+      provenance: provenanceOf(source, first.start, first.end, `ask_${rule.ask}`),
     });
   }
 

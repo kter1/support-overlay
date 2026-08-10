@@ -378,23 +378,11 @@ INSERT INTO issue_tickets (tenant_id, issue_id, zendesk_ticket_id, is_primary) V
 
 INSERT INTO issue_context (
   tenant_id, issue_id, extractor_version, payment_reference, order_reference,
-  claimed_amount_cents, claimed_currency, primary_ask, message_count, highlights
+  claimed_amount_cents, claimed_currency, primary_ask, message_count
 ) VALUES
   ('00000000-0000-0000-0000-000000000001',
    '10000000-0000-0000-0000-000000000004',
-   'extract_v1', 'ch_001', '1001', 4999, 'usd', 'refund_request', 2,
-   '[{"kind":"payment_reference","display":"ch_001","confidence":0.99,
-      "author_role":"customer","source_kind":"ticket_description",
-      "excerpt":"charge ch_001","rule":"stripe_charge"},
-     {"kind":"order_reference","display":"#1001","confidence":0.93,
-      "author_role":"customer","source_kind":"ticket_description",
-      "excerpt":"order #1001","rule":"order_labelled"},
-     {"kind":"money","display":"$49.99","confidence":0.97,
-      "author_role":"customer","source_kind":"ticket_description",
-      "excerpt":"$49.99","rule":"symbol_prefixed"},
-     {"kind":"ask","display":"Refund requested","confidence":0.80,
-      "author_role":"customer","source_kind":"ticket_description",
-      "excerpt":"refund","rule":"ask_refund"}]'::jsonb);
+   'extract_v1', 'ch_001', '1001', 4999, 'usd', 'refund_request', 2);
 
 INSERT INTO issue_card_state (
   tenant_id, issue_id, zendesk_ticket_id, issue_state,
@@ -423,23 +411,11 @@ INSERT INTO issue_tickets (tenant_id, issue_id, zendesk_ticket_id, is_primary) V
 
 INSERT INTO issue_context (
   tenant_id, issue_id, extractor_version, payment_reference, order_reference,
-  claimed_amount_cents, claimed_currency, primary_ask, message_count, highlights
+  claimed_amount_cents, claimed_currency, primary_ask, message_count
 ) VALUES
   ('00000000-0000-0000-0000-000000000001',
    '10000000-0000-0000-0000-000000000005',
-   'extract_v1', NULL, '1001', 4999, 'usd', 'refund_request', 2,
-   '[{"kind":"order_reference","display":"#1001","confidence":0.93,
-      "author_role":"customer","source_kind":"ticket_description",
-      "excerpt":"order #1001","rule":"order_labelled"},
-     {"kind":"money","display":"$49.99","confidence":0.97,
-      "author_role":"customer","source_kind":"ticket_description",
-      "excerpt":"$49.99","rule":"symbol_prefixed"},
-     {"kind":"ask","display":"Refund requested","confidence":0.80,
-      "author_role":"customer","source_kind":"ticket_description",
-      "excerpt":"refund","rule":"ask_refund"},
-     {"kind":"date","display":"Jan 15, 2026","confidence":0.99,
-      "author_role":"customer","source_kind":"comment",
-      "excerpt":"2026-01-15","rule":"iso_date"}]'::jsonb);
+   'extract_v1', NULL, '1001', 4999, 'usd', 'refund_request', 2);
 
 INSERT INTO issue_card_state (
   tenant_id, issue_id, zendesk_ticket_id, issue_state,
@@ -450,3 +426,66 @@ INSERT INTO issue_card_state (
    '10000000-0000-0000-0000-000000000005',
    '10005', 'OPEN', 'LOW', 0.31, now(), false,
    '{"shopifyOrderName":"#1001","refundAmount":4999,"currency":"usd"}');
+
+
+-- ─── The conversations ───────────────────────────────────────────────────────
+--
+-- The text the agent reads, and the text the extractor reads. Annotations are
+-- NOT written here: scripts/seed.ts runs the real extractor over these bodies
+-- and stores the spans it produces. Hand-written offsets would be correct on
+-- the day they were typed and silently wrong after any change to a rule.
+--
+-- Bodies are written to exercise the extractors that exist — an amount, a date,
+-- an order number, a payment reference, and a request — not to flatter them.
+
+INSERT INTO issue_messages
+  (tenant_id, issue_id, source_id, kind, author_role, body, position, created_at)
+VALUES
+  -- 10001 — happy path
+  ('00000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001',
+   'ticket:10001:subject', 'ticket_subject', 'customer',
+   'Refund for order #1001', 0, now() - interval '3 hours'),
+  ('00000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001',
+   'ticket:10001:description', 'ticket_description', 'customer',
+   'I returned order #1001 on 2026-01-15. I paid $49.99 on charge ch_001 and would like a refund.',
+   1, now() - interval '3 hours'),
+  ('00000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001',
+   'comment:10001-2', 'comment', 'agent',
+   'Thanks for the details — checking the payment record now.',
+   2, now() - interval '2 hours'),
+
+  -- 10002 — the Shopify order is archived
+  ('00000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000002',
+   'ticket:10002:subject', 'ticket_subject', 'customer',
+   'Where is my refund for order #2002?', 0, now() - interval '2 days'),
+  ('00000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000002',
+   'ticket:10002:description', 'ticket_description', 'customer',
+   'Order #2002 was returned on 2026-02-01. The total was $129.50. Please refund it.',
+   1, now() - interval '2 days'),
+
+  -- 10003 — a previous action whose outcome was never confirmed
+  ('00000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000003',
+   'ticket:10003:subject', 'ticket_subject', 'customer',
+   'Cancel order #3003', 0, now() - interval '5 hours'),
+  ('00000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000003',
+   'ticket:10003:description', 'ticket_description', 'customer',
+   'I would like to cancel order #3003 placed on 2026-03-02 for $75.00.',
+   1, now() - interval '5 hours'),
+
+  -- 10004 — the original request, refunded
+  ('00000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000004',
+   'ticket:10004:subject', 'ticket_subject', 'customer',
+   'Refund for order #1001', 0, now() - interval '21 days'),
+  ('00000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000004',
+   'ticket:10004:description', 'ticket_description', 'customer',
+   'I want a refund for order #1001, charge ch_001. I paid $49.99 on 2026-01-15.',
+   1, now() - interval '21 days'),
+
+  -- 10005 — same customer, same order, no charge id this time
+  ('00000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000005',
+   'ticket:10005:subject', 'ticket_subject', 'customer',
+   'Still waiting on my refund for 1001', 0, now() - interval '2 hours'),
+  ('00000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000005',
+   'ticket:10005:description', 'ticket_description', 'customer',
+   'I asked about order #1001 two weeks ago and still have not seen the $49.99 back. My bank says nothing arrived since 2026-01-30.',
+   1, now() - interval '2 hours');

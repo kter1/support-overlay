@@ -14,9 +14,10 @@
 import {
   OrderSignal,
   PaymentSignal,
-  Provenance,
   ReferenceValue,
   TextSource,
+  provenanceOf,
+  trimmedSpan,
 } from "./types";
 
 interface IdRule {
@@ -108,8 +109,10 @@ export function extractIdentifiers(source: TextSource): Array<OrderSignal | Paym
       const captured = match[rule.group];
       if (!captured) continue;
 
-      const start = match.index + match[0].indexOf(captured);
-      const end = start + captured.length;
+      // Highlight the whole phrase the rule matched — "order #1001", not a
+      // bare "1001" — because the label is what makes the mark legible in a
+      // sentence. The identifier used for lookups is still the capture.
+      const { start, end } = trimmedSpan(source.text, match.index, match[0]);
 
       if (claimed.some(([s, e]) => start < e && end > s)) continue;
 
@@ -121,14 +124,7 @@ export function extractIdentifiers(source: TextSource): Array<OrderSignal | Paym
       const value = rule.build(captured);
       claimed.push([start, end]);
 
-      const provenance: Provenance = {
-        sourceId: source.id,
-        sourceKind: source.kind,
-        start,
-        end,
-        excerpt: match[0].trim(),
-        rule: rule.id,
-      };
+      const provenance = provenanceOf(source, start, end, rule.id);
 
       const isPayment = value.provider === "stripe";
 

@@ -36,7 +36,7 @@ describe("customer history", () => {
     await db.driver.query(
       `INSERT INTO issue_context
          (tenant_id, issue_id, extractor_version, order_reference,
-          payment_reference, primary_ask, highlights, message_count)
+          payment_reference, primary_ask, annotations, message_count)
        VALUES ($1, $2, 'extract_v1', $3, $4, $5, '[]'::jsonb, 2)`,
       [
         tenantId,
@@ -217,7 +217,7 @@ describe("customer history", () => {
     await db.driver.query(
       `INSERT INTO issue_context
          (tenant_id, issue_id, extractor_version, order_reference,
-          primary_ask, highlights, message_count)
+          primary_ask, annotations, message_count)
        VALUES ($1, $2, 'extract_v1', $3, 'refund_request', '[]'::jsonb, 1)`,
       [otherTenantId, issueId, orderRef]
     );

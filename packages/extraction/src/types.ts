@@ -32,10 +32,65 @@ export interface Provenance {
   /** Character offsets into that source's text. */
   start: number;
   end: number;
-  /** The literal matched substring. */
+  /**
+   * The literal text at [start, end).
+   *
+   * Guaranteed equal to `source.text.slice(start, end)` — build it with
+   * `provenanceOf` and it cannot be otherwise.
+   */
   excerpt: string;
   /** Rule identifier, so a match can be explained and regression-tested. */
   rule: string;
+}
+
+/**
+ * Build provenance with the excerpt taken *from* the offsets.
+ *
+ * These two facts have to agree, and when they were computed independently
+ * they did not: the identifier rules recorded the offsets of the captured
+ * group ("1001") next to an excerpt of the whole match ("order #1001"). That
+ * disagreement is invisible in a list of extracted fragments — both fields
+ * look right on their own — and only surfaces when the offsets are used to
+ * mark text, at which point the span silently fails validation and the most
+ * important annotation on the card disappears.
+ *
+ * Deriving one from the other removes the class of bug rather than the
+ * instance.
+ */
+export function provenanceOf(
+  source: TextSource,
+  start: number,
+  end: number,
+  rule: string
+): Provenance {
+  return {
+    sourceId: source.id,
+    sourceKind: source.kind,
+    start,
+    end,
+    excerpt: source.text.slice(start, end),
+    rule,
+  };
+}
+
+/**
+ * Narrow a match to its non-whitespace extent.
+ *
+ * Several rules need surrounding context to match safely — a leading space
+ * before "#1001" proves it is not part of a longer token — but that space
+ * should not be highlighted.
+ */
+export function trimmedSpan(
+  text: string,
+  matchStart: number,
+  matched: string
+): { start: number; end: number } {
+  const leading = matched.length - matched.trimStart().length;
+  const trailing = matched.length - matched.trimEnd().length;
+  return {
+    start: matchStart + leading,
+    end: matchStart + matched.length - trailing,
+  };
 }
 
 export type SignalKind =

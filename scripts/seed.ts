@@ -17,12 +17,14 @@
  *   - Issue card state (read model)
  *   - One seeded action execution + outbox message (Scenario 3)
  *   - Audit log entries for Scenario 3
+ *   - Conversation bodies, with annotations computed by the real extractor
  */
 
 import { Pool } from "pg";
 import { createHash } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
+import { generateSeedAnnotations } from "./lib/seed-annotations";
 
 const DEMO_TENANT = "00000000-0000-0000-0000-000000000001";
 
@@ -95,6 +97,14 @@ async function seedWebhookSecrets(client: {
   }
 }
 
+/** Compute the demo's spans with the real extractor. See lib/seed-annotations. */
+async function seedAnnotations(client: {
+  query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }>;
+}): Promise<void> {
+  const count = await generateSeedAnnotations(client);
+  console.log(`  \u2713 annotations computed for ${count} conversation(s)`);
+}
+
 function normalizeDatabaseUrl(raw?: string): string | undefined {
   if (!raw) return raw;
   try {
@@ -142,6 +152,7 @@ async function main() {
     await client.query(seedSql);
     await seedCredentials(client);
     await seedWebhookSecrets(client);
+    await seedAnnotations(client);
     await client.query("COMMIT");
 
     console.log("✓ Demo data seeded:");

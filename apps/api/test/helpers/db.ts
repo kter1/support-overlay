@@ -20,6 +20,7 @@ import * as path from "path";
 import { randomBytes } from "crypto";
 import { describe } from "vitest";
 import { setDriver, DbDriver } from "../../src/db/pool";
+import { generateSeedAnnotations } from "../../../../scripts/lib/seed-annotations";
 
 const MIGRATIONS_DIR = path.join(__dirname, "../../../../db/migrations");
 const SEED_FILE = path.join(__dirname, "../../../../db/seed.sql");
@@ -116,6 +117,11 @@ async function createPgliteDb(): Promise<TestDb> {
     isRealPostgres: false,
     async seed() {
       await db.exec(fs.readFileSync(SEED_FILE, "utf-8"));
+      // The demo's spans are generated, not written into seed.sql. Running the
+      // same generator here keeps the fixture identical to what a real
+      // `npm run db:seed` produces — otherwise tests assert against a database
+      // no user would ever have.
+      await generateSeedAnnotations(driver);
     },
     async exec(sql: string) {
       await db.exec(sql);
@@ -176,6 +182,8 @@ async function createServerDb(): Promise<TestDb> {
     isRealPostgres: true,
     async seed() {
       await pool.query(fs.readFileSync(SEED_FILE, "utf-8"));
+      // Same generation the demo runs; see the PGlite branch.
+      await generateSeedAnnotations(pool);
     },
     async exec(sql: string) {
       await pool.query(sql);

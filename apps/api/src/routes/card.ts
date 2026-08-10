@@ -143,13 +143,29 @@ export async function cardRoutes(app: FastifyInstance): Promise<void> {
               message_count: context.messageCount,
               extractor_version: context.extractorVersion,
               extracted_at: context.extractedAt,
-              highlights: context.highlights.map((h) => ({
-                kind: h.kind,
-                display: h.display,
-                confidence: h.confidence,
-                author_role: h.authorRole,
-                source_kind: h.sourceKind,
-                excerpt: h.excerpt,
+              // The thread the agent reads, each message carrying the spans
+              // that fall inside it. Offsets are already validated against the
+              // body they point into.
+              thread: context.thread.map((message) => ({
+                source_id: message.sourceId,
+                kind: message.kind,
+                author_role: message.authorRole,
+                body: message.body,
+                redacted: message.redacted,
+                redaction_reason: message.redactionReason,
+                created_at: message.createdAt,
+                annotations: message.annotations.map((a) => ({
+                  kind: a.kind,
+                  display: a.display,
+                  confidence: a.confidence,
+                  author_role: a.authorRole,
+                  start: a.start,
+                  end: a.end,
+                  excerpt: a.excerpt,
+                  rule: a.rule,
+                  reference: a.reference,
+                  resolved: a.resolved,
+                })),
               })),
             }
           : null,

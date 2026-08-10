@@ -75,7 +75,8 @@ export async function ingestTicketContext(
 
   // ── 1. Read the conversation ──────────────────────────────────────────────
   const conversation = await readTicket(zendeskTicketId, unavailable);
-  const context = readConversation(toTextSources(conversation, zendeskTicketId));
+  const sources = toTextSources(conversation, zendeskTicketId);
+  const context = readConversation(sources);
 
   await recordExtraction(tenantId, issueId, zendeskTicketId, context);
 
@@ -85,6 +86,18 @@ export async function ingestTicketContext(
 
   // ── 3. Persist ────────────────────────────────────────────────────────────
   await withTransaction(async (client) => {
+    // The thread and its annotations go in together: a span whose message is
+    // missing cannot be rendered, and a message whose spans are stale would be
+    // marked in the wrong places.
+    await persistThread(client, tenantId, issueId, sources);
+    await persistContext(
+      client,
+      tenantId,
+      issueId,
+      context,
+      resolveAnnotations(context, stripe, shopify)
+    );
+
     if (stripe) {
       await upsertEvidence(client, {
         tenantId,
@@ -456,37 +469,158 @@ async function upsertEvidence(
 }
 
 /**
- * Record what was extracted, with provenance, before any lookup happens.
+ * Store the thread the extractor read.
  *
- * Written twice, on purpose. `issue_context` is the read model the card and the
- * history assembler query — one current row, replaced on re-ingestion.
- * `audit_log` is the append-only answer to "why did you look up that charge?",
- * and it must keep every earlier extraction even when a later one overwrites
- * the current view.
+ * Persisted because an annotation is meaningless without the text it points
+ * into: offsets alone cannot be rendered, and re-fetching the ticket at read
+ * time would race the provider and change under the agent mid-decision. The
+ * rows carry the same `source_id` the extractor records in provenance, which
+ * is what lets a span find its message.
+ *
+ * Replaces rather than appends. The current thread is a read model; the
+ * append-only history lives in audit_log.
  */
-async function recordExtraction(
+async function persistThread(
+  client: PoolClient,
   tenantId: string,
   issueId: string,
-  ticketId: string,
-  context: ConversationContext
+  sources: TextSource[]
 ): Promise<void> {
-  const highlights = context.highlights.map((signal) => ({
-    kind: signal.kind,
-    display: signal.display,
-    confidence: signal.confidence,
-    author_role: signal.authorRole,
-    observed_at: signal.observedAt,
-    source_id: signal.provenance.sourceId,
-    source_kind: signal.provenance.sourceKind,
-    excerpt: signal.provenance.excerpt,
-    rule: signal.provenance.rule,
-  }));
+  await client.query(
+    `DELETE FROM issue_messages WHERE tenant_id = $1 AND issue_id = $2`,
+    [tenantId, issueId]
+  );
 
-  await query(
+  for (const [position, source] of sources.entries()) {
+    await client.query(
+      `INSERT INTO issue_messages
+         (tenant_id, issue_id, source_id, kind, author_role, body, position,
+          created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        tenantId,
+        issueId,
+        source.id,
+        source.kind,
+        source.authorRole,
+        source.text,
+        position,
+        source.createdAt,
+      ]
+    );
+  }
+}
+
+/** What an extracted reference turned out to be, once looked up. */
+interface ResolvedReference {
+  provider: string;
+  recordType: string;
+  reference: string;
+  status: string | null;
+  amountCents: number | null;
+  currency: string | null;
+}
+
+/**
+ * Attach provider records to the spans that produced them.
+ *
+ * Only the reference the pipeline actually looked up can resolve — the leads.
+ * A second charge id mentioned in passing is left unresolved rather than
+ * decorated with the first one's record, because the popover states what a
+ * span *is*, and a borrowed record there would be a confident lie.
+ */
+function resolveAnnotations(
+  context: ConversationContext,
+  stripe: StripeEvidence | null,
+  shopify: ShopifyEvidence | null
+): Map<string, ResolvedReference> {
+  const resolved = new Map<string, ResolvedReference>();
+
+  if (stripe) {
+    for (const reference of [stripe.chargeId, stripe.refundId]) {
+      if (!reference) continue;
+      resolved.set(reference, {
+        provider: "stripe",
+        recordType: reference === stripe.refundId ? "refund" : "charge",
+        reference,
+        status: stripe.refundStatus,
+        amountCents: stripe.refundAmountCents ?? stripe.chargeAmountCents,
+        currency: stripe.currency,
+      });
+    }
+  }
+
+  if (shopify) {
+    // The customer writes the order *name* ("1001"); the provider answers with
+    // its own id. Key both so the span resolves whichever the text carried.
+    for (const reference of [
+      shopify.orderId,
+      context.leads.orderReference,
+      shopify.orderName?.replace(/^#/, ""),
+    ]) {
+      if (!reference) continue;
+      resolved.set(reference, {
+        provider: "shopify",
+        recordType: "order",
+        reference: shopify.orderName ?? shopify.orderId,
+        status: shopify.financialStatus,
+        amountCents: shopify.orderTotalCents,
+        currency: shopify.currency,
+      });
+    }
+  }
+
+  return resolved;
+}
+
+/**
+ * Write the read model the card renders: every signal, with the span of text it
+ * came from and what it turned out to be.
+ *
+ * Every signal, not the top six. The six were a display budget for a list
+ * beside the message; marking text in place has no such budget, and a span the
+ * extractor found but the panel silently dropped is the one an agent would
+ * most want to see.
+ */
+async function persistContext(
+  client: PoolClient,
+  tenantId: string,
+  issueId: string,
+  context: ConversationContext,
+  resolved: Map<string, ResolvedReference>
+): Promise<void> {
+  const annotations = context.signals.map((signal) => {
+    const reference =
+      signal.kind === "payment_reference" || signal.kind === "order_reference"
+        ? (signal.value as { id: string }).id
+        : null;
+
+    return {
+      kind: signal.kind,
+      display: signal.display,
+      confidence: signal.confidence,
+      author_role: signal.authorRole,
+      observed_at: signal.observedAt,
+      source_id: signal.provenance.sourceId,
+      source_kind: signal.provenance.sourceKind,
+      // The offsets. Everything in this feature rests on
+      // body.slice(start, end) === excerpt holding all the way to the browser.
+      start: signal.provenance.start,
+      end: signal.provenance.end,
+      excerpt: signal.provenance.excerpt,
+      rule: signal.provenance.rule,
+      // Kept whether or not the lookup succeeded: history matches on what the
+      // customer wrote, so a span must stay flaggable without a provider hit.
+      reference,
+      resolved: reference ? resolved.get(reference) ?? null : null,
+    };
+  });
+
+  await client.query(
     `INSERT INTO issue_context
        (tenant_id, issue_id, extractor_version, payment_reference,
         order_reference, claimed_amount_cents, claimed_currency, primary_ask,
-        highlights, message_count, extracted_at)
+        annotations, message_count, extracted_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
      ON CONFLICT (tenant_id, issue_id) DO UPDATE SET
        extractor_version    = EXCLUDED.extractor_version,
@@ -495,7 +629,7 @@ async function recordExtraction(
        claimed_amount_cents = EXCLUDED.claimed_amount_cents,
        claimed_currency     = EXCLUDED.claimed_currency,
        primary_ask          = EXCLUDED.primary_ask,
-       highlights           = EXCLUDED.highlights,
+       annotations          = EXCLUDED.annotations,
        message_count        = EXCLUDED.message_count,
        extracted_at         = now()`,
     [
@@ -507,11 +641,25 @@ async function recordExtraction(
       context.leads.claimedAmountCents,
       context.leads.claimedCurrency ?? null,
       context.leads.primaryAsk?.value.ask ?? null,
-      JSON.stringify(highlights),
+      JSON.stringify(annotations),
       context.messageCount,
     ]
   );
+}
 
+/**
+ * Record what was extracted, with provenance, before any lookup happens.
+ *
+ * This is the append-only answer to "why did you look up that charge?" — it
+ * must survive a later re-ingestion overwriting the current view, and it must
+ * be written before the lookup it explains.
+ */
+async function recordExtraction(
+  tenantId: string,
+  issueId: string,
+  ticketId: string,
+  context: ConversationContext
+): Promise<void> {
   await writeAuditEvent(tenantId, issueId, {
     eventType: AuditEventType.CONTEXT_EXTRACTED,
     payload: {

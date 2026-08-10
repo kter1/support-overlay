@@ -7,7 +7,13 @@
  * marker or a decimal structure that is unambiguously money, and anything that
  * looks like an order number, a date, or a quantity is left alone.
  */
-import { MoneySignal, Provenance, TextSource, ExtractionOptions } from "./types";
+import {
+  MoneySignal,
+  Provenance,
+  TextSource,
+  ExtractionOptions,
+  provenanceOf as sharedProvenanceOf,
+} from "./types";
 
 /** Symbols we recognise, mapped to ISO 4217. */
 const SYMBOL_CURRENCY: Record<string, string> = {
@@ -264,19 +270,18 @@ export function formatMoney(amountCents: number, currency: string | null): strin
   }
 }
 
+/**
+ * Local shim over the shared builder: callers still pass the excerpt they
+ * matched, but it is discarded in favour of the text at [start, end). Keeping
+ * the parameter means every existing call site is checked by the compiler
+ * while the value itself can no longer disagree with the offsets.
+ */
 function provenanceOf(
   source: TextSource,
   start: number,
   end: number,
-  excerpt: string,
+  _excerpt: string,
   rule: string
 ): Provenance {
-  return {
-    sourceId: source.id,
-    sourceKind: source.kind,
-    start,
-    end,
-    excerpt,
-    rule,
-  };
+  return sharedProvenanceOf(source, start, end, rule);
 }

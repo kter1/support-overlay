@@ -6,6 +6,9 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { apiRequest } from "../zaf";
+import type { ThreadMessage } from "../components/AnnotatedThread";
+
+export type { ThreadMessage };
 
 interface CardData {
   issueId: string;
@@ -26,19 +29,9 @@ interface CardData {
   softWarnings: string[];
   correlationId: string;
   lastRebuiltAt: string;
-  /** What the extractor read out of the ticket thread. Null before ingestion. */
+  /** The annotated thread. Null before ingestion. */
   context: TicketContext | null;
   customerHistory: CustomerHistory;
-}
-
-/** One point of importance, with the text it was taken from. */
-export interface ContextHighlight {
-  kind: string;
-  display: string;
-  confidence: number;
-  authorRole: string;
-  sourceKind: string;
-  excerpt: string;
 }
 
 export interface TicketContext {
@@ -48,7 +41,8 @@ export interface TicketContext {
   claimedAmountCents: number | null;
   claimedCurrency: string | null;
   messageCount: number;
-  highlights: ContextHighlight[];
+  /** The conversation, each message carrying the spans found inside it. */
+  thread: ThreadMessage[];
 }
 
 export interface HistoryNotice {
@@ -150,13 +144,33 @@ interface ApiCardResponse {
     claimed_amount_cents?: number | null;
     claimed_currency?: string | null;
     message_count?: number | null;
-    highlights?: Array<{
+    thread?: Array<{
+      source_id?: string;
       kind?: string;
-      display?: string;
-      confidence?: number;
       author_role?: string;
-      source_kind?: string;
-      excerpt?: string;
+      body?: string | null;
+      redacted?: boolean;
+      redaction_reason?: string | null;
+      created_at?: string;
+      annotations?: Array<{
+        kind?: string;
+        display?: string;
+        confidence?: number;
+        author_role?: string;
+        start?: number;
+        end?: number;
+        excerpt?: string;
+        rule?: string;
+        reference?: string | null;
+        resolved?: {
+          provider: string;
+          recordType: string;
+          reference: string;
+          status: string | null;
+          amountCents: number | null;
+          currency: string | null;
+        } | null;
+      }>;
     }>;
   } | null;
   customer_history?: {
@@ -334,22 +348,54 @@ function normalizeContext(api: ApiCardResponse): TicketContext | null {
     claimedAmountCents: asNumber(raw.claimed_amount_cents),
     claimedCurrency: asString(raw.claimed_currency),
     messageCount: asNumber(raw.message_count) ?? 0,
-    // A highlight without its excerpt is dropped: the whole point is that the
-    // agent can see the sentence it came from, and a bare claim invites trust
-    // it hasn't earned.
-    highlights: (raw.highlights ?? []).flatMap((h) => {
-      const display = asString(h.display);
-      const excerpt = asString(h.excerpt);
-      if (!display || !excerpt) return [];
+    // A message with no body cannot be annotated; a span without usable
+    // offsets cannot be placed. Both are dropped rather than guessed at.
+    thread: (raw.thread ?? []).flatMap((message) => {
+      const sourceId = asString(message.source_id);
+      if (!sourceId) return [];
+
+      const redacted = message.redacted === true;
+      const body = typeof message.body === "string" ? message.body : null;
+      if (!redacted && body === null) return [];
 
       return [
         {
-          kind: h.kind ?? "unknown",
-          display,
-          confidence: asNumber(h.confidence) ?? 0,
-          authorRole: h.author_role ?? "unknown",
-          sourceKind: h.source_kind ?? "comment",
-          excerpt,
+          sourceId,
+          kind: message.kind ?? "comment",
+          authorRole: message.author_role ?? "customer",
+          body,
+          redacted,
+          redactionReason: asString(message.redaction_reason),
+          createdAt: message.created_at ?? "",
+          annotations: redacted
+            ? []
+            : (message.annotations ?? []).flatMap((a) => {
+                const start = asNumber(a.start);
+                const end = asNumber(a.end);
+                const display = asString(a.display);
+                const excerpt = typeof a.excerpt === "string" ? a.excerpt : null;
+
+                if (start === null || end === null || !display || excerpt === null) {
+                  return [];
+                }
+                // Trust nothing about placement that the text does not confirm.
+                if (body === null || body.slice(start, end) !== excerpt) return [];
+
+                return [
+                  {
+                    start,
+                    end,
+                    kind: a.kind ?? "unknown",
+                    display,
+                    confidence: asNumber(a.confidence) ?? 0,
+                    authorRole: a.author_role ?? "customer",
+                    excerpt,
+                    rule: a.rule ?? "",
+                    reference: a.reference ?? null,
+                    resolved: a.resolved ?? null,
+                  },
+                ];
+              }),
         },
       ];
     }),

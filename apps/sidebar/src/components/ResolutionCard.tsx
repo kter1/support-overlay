@@ -17,7 +17,7 @@ import EvidencePanel from "./EvidencePanel";
 import ActionPanel from "./ActionPanel";
 import StatusBadge from "./StatusBadge";
 import DegradedBanner from "./DegradedBanner";
-import ContextPanel from "./ContextPanel";
+import AnnotatedThread from "./AnnotatedThread";
 import HistoryPanel, { HistoryNotices } from "./HistoryPanel";
 import { useCardData } from "../hooks/useCardData";
 
@@ -78,18 +78,13 @@ export default function ResolutionCard({
 
   if (!card) return null;
 
-  // A prior refund on this same order is not a happy path, whatever the match
-  // score says: the agent has a decision to make before they click anything.
-  const hasCriticalHistory = card.customerHistory.notices.some(
-    (n) => n.severity === "critical"
-  );
-
-  const isHappyPath =
-    card.matchBand === "HIGH" &&
-    !card.isSourceUnavailable &&
-    card.freshnessStatus === "FRESH" &&
-    !card.pendingActionExecutionId &&
-    !hasCriticalHistory;
+  // Identifiers the history layer flagged, so the matching span inside the
+  // message can carry the warning too. Seeing "already refunded" on the very
+  // order number the customer typed is a different thing from reading it in a
+  // banner further down.
+  const flaggedReferences = card.customerHistory.priorInteractions
+    .filter((i) => i.sameSubject && i.refundStatus === "succeeded")
+    .flatMap((i) => (i.orderReference ? [i.orderReference] : []));
 
   return (
     <div style={styles.container}>
@@ -116,34 +111,20 @@ export default function ResolutionCard({
         </div>
       )}
 
-      {/* ─── Primary Status Row ─────────────────────────────────────────────── */}
-      <div style={styles.statusRow}>
-        <div>
-          <div style={styles.issueStateLabel}>
-            {formatIssueState(card.issueState)}
-          </div>
-          {card.matchBand && (
-            <StatusBadge matchBand={card.matchBand} confidence={card.confidenceScore} />
-          )}
-        </div>
-        <div style={{ textAlign: "right" }}>
-          {loading && <Spinner size={12} />}
-          <div style={styles.correlationId}>
-            ID: {card.correlationId?.slice(0, 8)}
-          </div>
-        </div>
-      </div>
+      {/*
+        The conversation leads.
 
-      {/* ─── Evidence Summary (always visible on happy path) ─────────────────── */}
-      {card.evidenceSummary && (
-        <EvidenceSummaryQuick
-          summary={card.evidenceSummary}
-          freshnessStatus={card.freshnessStatus}
+        The agent is here to read a customer's message; the system's job is to
+        annotate it, not to replace it with a summary of a transaction. Putting
+        the ledger first made the panel answer a question — "what is the state
+        of this refund?" — that the agent had not asked yet.
+      */}
+      {card.context && (
+        <AnnotatedThread
+          thread={card.context.thread}
+          flaggedReferences={flaggedReferences}
         />
       )}
-
-      {/* ─── What the customer said ─────────────────────────────────────────── */}
-      {card.context && <ContextPanel context={card.context} />}
 
       {/*
         History warnings sit directly above the buttons. Below them they would
@@ -169,23 +150,45 @@ export default function ResolutionCard({
       {/* ─── Previous interactions (collapsed) ──────────────────────────────── */}
       <HistoryPanel history={card.customerHistory} />
 
-      {/* ─── Progressive Disclosure — Details ───────────────────────────────── */}
-      {!isHappyPath && (
-        <button
-          style={styles.detailsToggle}
-          onClick={() => setDetailsOpen(!detailsOpen)}
-        >
-          {detailsOpen ? "▲ Hide details" : "▼ Show details"}
-        </button>
-      )}
+      {/* ─── Transaction and evidence (collapsed) ───────────────────────────── */}
+      <button
+        style={styles.detailsToggle}
+        onClick={() => setDetailsOpen(!detailsOpen)}
+      >
+        {detailsOpen ? "▲" : "▼"} Transaction &amp; evidence
+        {card.matchBand && (
+          <span style={styles.detailsBadge}>
+            <StatusBadge matchBand={card.matchBand} confidence={card.confidenceScore} />
+          </span>
+        )}
+      </button>
 
-      {(detailsOpen || isHappyPath) && card.evidenceSummary && (
-        <EvidencePanel
-          evidenceSummary={card.evidenceSummary}
-          matchBand={card.matchBand}
-          confidenceScore={card.confidenceScore}
-          isSourceUnavailable={card.isSourceUnavailable}
-        />
+      {detailsOpen && (
+        <>
+          <div style={styles.statusRow}>
+            <div style={styles.issueStateLabel}>
+              {formatIssueState(card.issueState)}
+            </div>
+            <div style={styles.correlationId}>
+              ID: {card.correlationId?.slice(0, 8)}
+            </div>
+          </div>
+
+          {card.evidenceSummary && (
+            <>
+              <EvidenceSummaryQuick
+                summary={card.evidenceSummary}
+                freshnessStatus={card.freshnessStatus}
+              />
+              <EvidencePanel
+                evidenceSummary={card.evidenceSummary}
+                matchBand={card.matchBand}
+                confidenceScore={card.confidenceScore}
+                isSourceUnavailable={card.isSourceUnavailable}
+              />
+            </>
+          )}
+        </>
       )}
 
       {/* ─── Pending States ─────────────────────────────────────────────────── */}
@@ -408,11 +411,10 @@ const styles: Record<string, React.CSSProperties> = {
   warningIcon: { fontSize: 13, flexShrink: 0, marginTop: 1 },
   warningText: { lineHeight: 1.4 },
   statusRow: {
-    padding: "14px 16px 10px",
+    padding: "10px 16px",
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "flex-start",
-    borderBottom: "1px solid #f0f0f0",
+    alignItems: "baseline",
   },
   issueStateLabel: {
     fontSize: 14,
@@ -456,7 +458,11 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     cursor: "pointer",
     textAlign: "left",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
   },
+  detailsBadge: { marginLeft: "auto" },
   pendingPanel: {
     margin: "12px 16px",
     padding: "12px",

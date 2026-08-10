@@ -65,6 +65,47 @@ describe("demo seed", () => {
     expect(earlier.refund_status).toBe("succeeded");
   });
 
+  it("seeds conversations whose spans land on the text they claim", async () => {
+    // The seeded annotations are produced by running the real extractor over
+    // the seeded bodies, precisely so this holds without anyone maintaining
+    // offsets by hand. If it ever fails, the demo is highlighting the wrong
+    // words — which is worse than highlighting none.
+    const result = await db.driver.query<{
+      source_id: string;
+      excerpt: string;
+      slice: string;
+    }>(
+      `SELECT a->>'source_id' AS source_id,
+              a->>'excerpt'   AS excerpt,
+              substring(m.body from ((a->>'start')::int + 1)
+                        for ((a->>'end')::int - (a->>'start')::int)) AS slice
+         FROM issue_context c
+         CROSS JOIN LATERAL jsonb_array_elements(c.annotations) a
+         JOIN issue_messages m
+           ON m.source_id = a->>'source_id' AND m.issue_id = c.issue_id`
+    );
+
+    expect(result.rows.length).toBeGreaterThan(0);
+    for (const row of result.rows) {
+      expect(row.slice, `span in ${row.source_id}`).toBe(row.excerpt);
+    }
+  });
+
+  it("gives every demo ticket a conversation to annotate", async () => {
+    // An empty thread renders an empty panel, which reads as a broken app.
+    const result = await db.driver.query<{ zendesk_ticket_id: string; n: number }>(
+      `SELECT t.zendesk_ticket_id, count(m.id)::int AS n
+         FROM issue_tickets t
+         LEFT JOIN issue_messages m ON m.issue_id = t.issue_id
+        GROUP BY t.zendesk_ticket_id
+        ORDER BY t.zendesk_ticket_id`
+    );
+
+    for (const row of result.rows) {
+      expect(row.n, `ticket ${row.zendesk_ticket_id}`).toBeGreaterThan(0);
+    }
+  });
+
   it("projects refund evidence the card model reads", async () => {
     const result = await db.driver.query<{ n: number }>(
       `SELECT count(*)::int AS n FROM evidence_normalized

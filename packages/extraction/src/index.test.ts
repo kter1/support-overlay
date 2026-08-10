@@ -292,4 +292,68 @@ describe("readConversation", () => {
       ["money", "date", "order_reference", "payment_reference", "ask"].includes(k)
     )).toBe(true);
   });
+
+  describe("provenance offsets", () => {
+    /**
+     * The invariant the annotation overlay rests on: a span must land exactly
+     * on the text it claims. Before this was enforced, the identifier rules
+     * recorded the offsets of the captured group ("1001") beside an excerpt of
+     * the whole match ("order #1001"). Both fields looked right in isolation,
+     * and a list of extracted fragments could never reveal the disagreement —
+     * it only surfaced when the offsets were used to mark text, at which point
+     * the order number silently failed validation and vanished from the card.
+     */
+    const CORPUS = [
+      "I want a refund for order #1001, charge ch_001. I paid $49.99 on 2026-01-15.",
+      "Order #2002 was returned on 2026-02-01. The total was $129.50. Please refund it.",
+      "Cancel order no. 3003 placed yesterday for \u00a35.00 (receipt #7788).",
+      "refund re_abc123 please \u2014 \u00a5500 charged 15/01/2026",
+      "\ud83d\ude00 order #4004 for $10 on Jan 3, 2026",
+      "#EU1001 arrived broken, I paid 49,99 EUR last Tuesday",
+      "no identifiers here at all, just complaining",
+    ];
+
+    it("every signal's excerpt is exactly the text at its offsets", () => {
+      for (const text of CORPUS) {
+        const context = readConversation([source(text)]);
+
+        for (const signal of context.signals) {
+          const { start, end, excerpt, rule } = signal.provenance;
+          expect(
+            text.slice(start, end),
+            `${rule} on ${JSON.stringify(text)}`
+          ).toBe(excerpt);
+        }
+      }
+    });
+
+    it("every span lies inside its source text", () => {
+      for (const text of CORPUS) {
+        for (const signal of readConversation([source(text)]).signals) {
+          const { start, end } = signal.provenance;
+          expect(start).toBeGreaterThanOrEqual(0);
+          expect(end).toBeGreaterThan(start);
+          expect(end).toBeLessThanOrEqual(text.length);
+        }
+      }
+    });
+
+    it("marks the labelled phrase for an order, not the bare digits", () => {
+      // "order #1001" reads as an annotation in a sentence; "1001" does not.
+      const context = readConversation([source("I want a refund for order #1001 today")]);
+      const order = context.signals.find((s) => s.kind === "order_reference");
+
+      expect(order?.provenance.excerpt).toBe("order #1001");
+      // The identifier used for provider lookups stays the bare capture.
+      expect((order?.value as { id: string }).id).toBe("1001");
+    });
+
+    it("does not include surrounding whitespace in a span", () => {
+      const context = readConversation([source("please check #1001 for me")]);
+      const order = context.signals.find((s) => s.kind === "order_reference");
+
+      expect(order?.provenance.excerpt).toBe("#1001");
+      expect(order?.provenance.excerpt.trim()).toBe(order?.provenance.excerpt);
+    });
+  });
 });

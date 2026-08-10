@@ -10,7 +10,7 @@
  * must resolve to the same instant it meant when written, or the audit trail
  * changes every time someone opens the card.
  */
-import { DateSignal, TextSource, ExtractionOptions } from "./types";
+import { DateSignal, TextSource, ExtractionOptions, provenanceOf } from "./types";
 
 const MONTHS: Record<string, number> = {
   jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2,
@@ -56,14 +56,8 @@ export function extractDates(
       confidence,
       authorRole: source.authorRole,
       observedAt: source.createdAt,
-      provenance: {
-        sourceId: source.id,
-        sourceKind: source.kind,
-        start,
-        end,
-        excerpt,
-        rule,
-      },
+      // Excerpt comes from the offsets, never alongside them.
+      provenance: provenanceOf(source, start, end, rule),
     });
   };
 
