@@ -18,6 +18,7 @@ const net = require("net");
 const path = require("path");
 const { spawn } = require("child_process");
 const { ensureEnvFile, loadEnvFile, ENV_PATH } = require("./lib/local-env");
+const { missingWorkspaceLinks } = require("./lib/workspaces");
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -72,6 +73,21 @@ async function main() {
     console.error(
       "\nDATABASE_URL is not set and no .env was found.\n" +
         "Run `npm run demo:start` for the full first-run setup.\n"
+    );
+    process.exit(1);
+  }
+
+  // Catch this before spawning three services. Otherwise the API dies on a
+  // module-not-found naming a package that is visibly present in the repo,
+  // while the worker and sidebar start normally — so the stack looks alive and
+  // the browser reports only that it cannot reach the API.
+  const missing = missingWorkspaceLinks();
+  if (missing.length > 0) {
+    console.error(
+      `\nThese workspace packages are not linked into node_modules:\n` +
+        `  ${missing.join("\n  ")}\n\n` +
+        "That happens when a checkout adds a package to a tree installed on an\n" +
+        "earlier branch. Fix it with:\n\n  npm install\n"
     );
     process.exit(1);
   }

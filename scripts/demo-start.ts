@@ -505,9 +505,10 @@ ${c.bold}${c.green}━━━━━━━━━━━━━━━━━━━━�
   ${c.dim}00000000-0000-0000-0000-000000000001${c.reset}
 
   ${c.bold}Demo tickets${c.reset}
-  ${c.dim}10001 — Happy path (Scenario 1)${c.reset}
-  ${c.dim}10002 — Degraded / source unavailable (Scenario 2)${c.reset}
-  ${c.dim}10003 — Retry + unknown outcome (Scenario 3)${c.reset}
+  ${c.dim}10001 — Happy path${c.reset}
+  ${c.dim}10002 — Degraded / source unavailable${c.reset}
+  ${c.dim}10003 — Retry + unknown outcome${c.reset}
+  ${c.yellow}10005 — Already refunded on another ticket${c.reset}
 
   ${c.bold}Commands${c.reset}
   Smoke test:   ${c.cyan}npm run demo:smoke${c.reset}
