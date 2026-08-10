@@ -18,10 +18,10 @@
  * Usage: npm run app:package
  */
 import { execFileSync } from "child_process";
-import * as zlib from "zlib";
 import * as fs from "fs";
 import * as path from "path";
 import { validateManifest } from "./lib/manifest-validator";
+import { renderLogo } from "./lib/logo";
 
 const ROOT = path.join(__dirname, "..");
 const SIDEBAR = path.join(ROOT, "apps/sidebar");
@@ -43,74 +43,6 @@ function copyDir(from: string, to: string): void {
       fs.copyFileSync(src, dest);
     }
   }
-}
-
-/**
- * A 320x320 solid-colour PNG, written by hand so packaging has no image
- * dependency. It is a placeholder — replace assets/logo.png with real
- * artwork before submitting to the Zendesk Marketplace.
- */
-function writePlaceholderLogo(target: string): void {
-  const size = 320;
-  const [r, g, b] = [31, 115, 183]; // Zendesk blue
-
-  const raw = Buffer.alloc((size * 3 + 1) * size);
-  let offset = 0;
-  for (let y = 0; y < size; y++) {
-    raw[offset++] = 0; // filter type: none
-    for (let x = 0; x < size; x++) {
-      raw[offset++] = r;
-      raw[offset++] = g;
-      raw[offset++] = b;
-    }
-  }
-
-  const chunk = (type: string, data: Buffer): Buffer => {
-    const length = Buffer.alloc(4);
-    length.writeUInt32BE(data.length);
-    const typeAndData = Buffer.concat([Buffer.from(type, "ascii"), data]);
-    const crc = Buffer.alloc(4);
-    crc.writeUInt32BE(crc32(typeAndData) >>> 0);
-    return Buffer.concat([length, typeAndData, crc]);
-  };
-
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(size, 0);
-  ihdr.writeUInt32BE(size, 4);
-  ihdr[8] = 8; // bit depth
-  ihdr[9] = 2; // colour type: truecolour
-  ihdr[10] = 0;
-  ihdr[11] = 0;
-  ihdr[12] = 0;
-
-  fs.writeFileSync(
-    target,
-    Buffer.concat([
-      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-      chunk("IHDR", ihdr),
-      chunk("IDAT", zlib.deflateSync(raw)),
-      chunk("IEND", Buffer.alloc(0)),
-    ])
-  );
-}
-
-let crcTable: number[] | null = null;
-function crc32(buf: Buffer): number {
-  if (!crcTable) {
-    crcTable = [];
-    for (let n = 0; n < 256; n++) {
-      let c = n;
-      for (let k = 0; k < 8; k++) {
-        c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-      }
-      crcTable[n] = c;
-    }
-  }
-  let crc = 0xffffffff;
-  for (const byte of buf) {
-    crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
-  }
-  return crc ^ 0xffffffff;
 }
 
 function main(): void {
@@ -155,8 +87,8 @@ function main(): void {
     fs.copyFileSync(logoSource, logoTarget);
     log("✓ logo.png included");
   } else {
-    writePlaceholderLogo(logoTarget);
-    log("! logo.png generated as a placeholder — replace before publishing");
+    fs.writeFileSync(logoTarget, renderLogo(320));
+    log("! logo.png generated — replace with brand artwork before publishing");
   }
 
   // Settings labels shown in the app installation screen.
