@@ -129,6 +129,19 @@ export interface DateValue {
   granularity: "day" | "month" | "year";
   /** True for "yesterday", "last week" — resolved, but softer evidence. */
   wasRelative: boolean;
+  /**
+   * Whether the text actually contained a year.
+   *
+   * "8/1" and "Aug 1" do not. A year has to be supplied to produce an instant at
+   * all, so one is inferred — but the guess is worth marking, because the
+   * customer's real orders can settle it later and evidence beats inference. A
+   * January ticket about a December order is the case that makes the naive
+   * "assume the message's year" rule wrong.
+   *
+   * Only meaningful for absolute dates: when `wasRelative` is true the whole
+   * date came from the reference, and there is nothing for evidence to correct.
+   */
+  yearWritten: boolean;
 }
 
 export interface ReferenceValue {

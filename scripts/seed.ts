@@ -158,7 +158,8 @@ async function main() {
     console.log("✓ Demo data seeded:");
     console.log(`  Tenant:   Acme Support Co (${DEMO_TENANT})`);
     console.log("  Tickets:  10001 (happy path), 10002 (degraded),");
-    console.log("            10003 (awaiting reconciliation), 10005 (already refunded)");
+    console.log("            10003 (awaiting reconciliation), 10005 (already refunded),");
+    console.log("            10006 (plain email \u2014 no order number)");
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
     console.error("✗ Seed failed:", err);

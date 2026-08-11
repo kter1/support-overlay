@@ -24,6 +24,9 @@ const WEEKDAYS: Record<string, number> = {
   thursday: 4, friday: 5, saturday: 6,
 };
 
+/** Words that make a nearby number far more likely to be a date. */
+const TEMPORAL_CONTEXT = /\b(on|since|around|from|dated|ordered|placed|delivered|by|before|after)\s*$/i;
+
 const MONTH_NAMES = Object.keys(MONTHS).join("|");
 const WEEKDAY_NAMES = Object.keys(WEEKDAYS).join("|");
 
@@ -43,7 +46,10 @@ export function extractDates(
     date: Date,
     granularity: DateSignal["value"]["granularity"],
     wasRelative: boolean,
-    confidence: number
+    confidence: number,
+    // Defaults to true so every existing rule that writes a full date keeps its
+    // meaning; only the rules that infer a year pass false.
+    yearWritten = true
   ): void => {
     if (claimed.some(([s, e]) => start < e && end > s)) return;
     if (!Number.isFinite(date.getTime())) return;
@@ -51,7 +57,7 @@ export function extractDates(
     claimed.push([start, end]);
     signals.push({
       kind: "date",
-      value: { date, granularity, wasRelative },
+      value: { date, granularity, wasRelative, yearWritten },
       display: formatDate(date, granularity),
       confidence,
       authorRole: source.authorRole,
@@ -88,8 +94,9 @@ export function extractDates(
         "month_name_first",
         new Date(Date.UTC(year, MONTHS[m[1].toLowerCase()], +m[2])),
         "day",
-        !m[3],
-        m[3] ? 0.96 : 0.85
+        false,
+        m[3] ? 0.96 : 0.85,
+        Boolean(m[3])
       );
     }
   );
@@ -106,8 +113,9 @@ export function extractDates(
         "day_month_name",
         new Date(Date.UTC(year, MONTHS[m[2].toLowerCase()], +m[1])),
         "day",
-        !m[3],
-        m[3] ? 0.96 : 0.85
+        false,
+        m[3] ? 0.96 : 0.85,
+        Boolean(m[3])
       );
     }
   );
@@ -149,6 +157,85 @@ export function extractDates(
       "day",
       false,
       confidence
+    );
+  });
+
+  // ── Bare numeric: "8/1", "8-1" ─────────────────────────────────────────────
+  //
+  // How people actually write dates in support email, and previously matched by
+  // nothing at all — the year-bearing rule above requires one. Runs after it, so
+  // the day/month/year form claims its span first and "12/25" inside
+  // "12/25/2026" is never re-read as a bare date.
+  //
+  // Doubly ambiguous: 8/1 is August 1st to a US reader and 1st August elsewhere,
+  // and it might not be a date — "3/4" is equally a fraction. Both unknowns are
+  // priced into the confidence rather than hidden, and a temporal preposition
+  // nearby ("on 8/1", "since 8/1") lifts it, the same way money.ts treats a bare
+  // decimal with surrounding context.
+  scan(source.text, /(?<![\d/\-.])(\d{1,2})[/-](\d{1,2})(?![\d/\-.])/g, (m) => {
+    const a = +m[1];
+    const b = +m[2];
+    if (a < 1 || b < 1 || a > 31 || b > 31) return;
+
+    let month: number;
+    let day: number;
+    let confidence: number;
+
+    if (a > 12 && b <= 12) {
+      day = a;
+      month = b - 1;
+      confidence = 0.8;
+    } else if (b > 12 && a <= 12) {
+      month = a - 1;
+      day = b;
+      confidence = 0.8;
+    } else if (a <= 12 && b <= 12) {
+      month = a - 1;
+      day = b;
+      confidence = 0.55;
+    } else {
+      // Both above 12 — not a date in any ordering.
+      return;
+    }
+
+    const before = source.text.slice(Math.max(0, m.index - 14), m.index);
+    if (TEMPORAL_CONTEXT.test(before)) confidence = Math.min(0.85, confidence + 0.2);
+
+    push(
+      m.index,
+      m.index + m[0].length,
+      m[0],
+      "bare_numeric",
+      new Date(Date.UTC(inferYear(reference, month, day), month, day)),
+      "day",
+      false,
+      confidence,
+      false
+    );
+  });
+
+  // ── Bare ordinal: "on the 3rd", "since the 22nd" ───────────────────────────
+  //
+  // Requires the preposition. Without it "the 3rd time this week" and "our 2nd
+  // attempt" both become dates, and an overlay that underlines those teaches an
+  // agent to stop reading the underlines.
+  scan(source.text, /\b(?:on|since|around|from)\s+the\s+(\d{1,2})(?:st|nd|rd|th)\b/gi, (m) => {
+    const day = +m[1];
+    if (day < 1 || day > 31) return;
+
+    const month = reference.getUTCMonth();
+    const year = inferYear(reference, month, day);
+
+    push(
+      m.index,
+      m.index + m[0].length,
+      m[0],
+      "bare_ordinal",
+      new Date(Date.UTC(year, month, day)),
+      "day",
+      false,
+      0.6,
+      false
     );
   });
 

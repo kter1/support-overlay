@@ -7,6 +7,17 @@
  * much confidence as a correct one.
  */
 
+export interface CandidateRecord {
+  provider: string;
+  recordType: string;
+  reference: string;
+  status: string | null;
+  amountCents: number | null;
+  currency: string | null;
+  occurredAt: string | null;
+  description: string | null;
+}
+
 export interface Span {
   start: number;
   end: number;
@@ -18,14 +29,10 @@ export interface Span {
   rule: string;
   /** The identifier as written, for references. Null for other kinds. */
   reference: string | null;
-  resolved: {
-    provider: string;
-    recordType: string;
-    reference: string;
-    status: string | null;
-    amountCents: number | null;
-    currency: string | null;
-  } | null;
+  /** Every record this span could mean. Empty when nothing matched. */
+  candidates: CandidateRecord[];
+  /** How the match was made: identifier, date, amount, merchant. */
+  matchedOn: string | null;
 }
 
 export type Segment =

@@ -489,3 +489,49 @@ VALUES
    'ticket:10005:description', 'ticket_description', 'customer',
    'I asked about order #1001 two weeks ago and still have not seen the $49.99 back. My bank says nothing arrived since 2026-01-30.',
    1, now() - interval '2 hours');
+
+
+-- ─── Scenario 5: the message this product exists for ─────────────────────────
+--
+-- An ordinary support email. No order number, no charge id — just a date, an
+-- amount, and a complaint, written the way people write. Every earlier scenario
+-- hands the system an identifier; this one hands it prose, which is the harder
+-- and far more common case.
+--
+-- The records behind it live in the connector simulators (see
+-- scripts/lib/demo-records.ts), so hovering "8/1" and "$39" resolves through the
+-- same adapters a real ticket would use.
+
+INSERT INTO issues (id, tenant_id, customer_id, customer_email, state, opened_at) VALUES
+  ('10000000-0000-0000-0000-000000000006',
+   '00000000-0000-0000-0000-000000000001',
+   'cust_food_006',
+   'sam@example.com',
+   'OPEN',
+   now() - interval '40 minutes');
+
+INSERT INTO issue_tickets (tenant_id, issue_id, zendesk_ticket_id, is_primary) VALUES
+  ('00000000-0000-0000-0000-000000000001',
+   '10000000-0000-0000-0000-000000000006',
+   '10006', true);
+
+INSERT INTO issue_messages
+  (tenant_id, issue_id, source_id, kind, author_role, body, position, created_at)
+VALUES
+  ('00000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000006',
+   'ticket:10006:subject', 'ticket_subject', 'customer',
+   'Refund request', 0, now() - interval '40 minutes'),
+  ('00000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000006',
+   'ticket:10006:description', 'ticket_description', 'customer',
+   'Hello, I am writing to request a refund. On 8/1 I ordered food from Mcdonalds which never came. I would like the $39 to be credited to my payment method. Thanks',
+   1, now() - interval '40 minutes');
+
+-- No match band: nothing in the text names a record, which is the point. The
+-- card's value here comes from the annotations, not from the scorer.
+INSERT INTO issue_card_state (
+  tenant_id, issue_id, zendesk_ticket_id, issue_state,
+  match_band, confidence_score, evidence_fetched_at, is_source_unavailable
+) VALUES
+  ('00000000-0000-0000-0000-000000000001',
+   '10000000-0000-0000-0000-000000000006',
+   '10006', 'OPEN', NULL, NULL, now(), false);

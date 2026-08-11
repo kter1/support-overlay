@@ -123,6 +123,7 @@ export default function ResolutionCard({
         <AnnotatedThread
           thread={card.context.thread}
           flaggedReferences={flaggedReferences}
+          primaryAsk={card.context.primaryAsk}
         />
       )}
 

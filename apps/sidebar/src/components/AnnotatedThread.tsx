@@ -21,7 +21,7 @@
  * said would be worse than no overlay.
  */
 
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { toSegments, Span } from "../lib/spans";
 import AnnotationPopover from "./AnnotationPopover";
 
@@ -43,9 +43,32 @@ interface Props {
   thread: ThreadMessage[];
   /** Identifiers the history layer flagged, so a span can carry the warning. */
   flaggedReferences?: string[];
+  /** What the customer is asking for, shown above the message. */
+  primaryAsk?: string | null;
 }
 
-export default function AnnotatedThread({ thread, flaggedReferences = [] }: Props) {
+/**
+ * Kinds that point at a record, and so are worth underlining.
+ *
+ * A request ("refund") points at nothing to look up — hovering it could only
+ * repeat the sentence it came from. Underlining it spends the reader's
+ * attention for no answer, and five underlines in three sentences is the
+ * difference between an annotated paragraph and a struck-through one. Intent
+ * goes in the header instead.
+ */
+const RESOLVABLE_KINDS = new Set([
+  "money",
+  "date",
+  "order_reference",
+  "payment_reference",
+  "merchant",
+]);
+
+export default function AnnotatedThread({
+  thread,
+  flaggedReferences = [],
+  primaryAsk = null,
+}: Props) {
   const [expanded, setExpanded] = useState(false);
   const [openSpan, setOpenSpan] = useState<string | null>(null);
 
@@ -71,6 +94,13 @@ export default function AnnotatedThread({ thread, flaggedReferences = [] }: Prop
 
   return (
     <div style={styles.thread}>
+      {primaryAsk && (
+        <div style={styles.intent}>
+          <span style={styles.intentLabel}>Asking for</span>
+          <span style={styles.intentValue}>{formatAsk(primaryAsk)}</span>
+        </div>
+      )}
+
       {hidden > 0 && (
         <button style={styles.expand} onClick={() => setExpanded(true)}>
           Show {hidden} more message{hidden === 1 ? "" : "s"}
@@ -136,7 +166,9 @@ function renderBody(
 ): React.ReactNode {
   const body = message.body ?? "";
 
-  return toSegments(body, message.annotations).map((segment, index) => {
+  const marks = message.annotations.filter((a) => RESOLVABLE_KINDS.has(a.kind));
+
+  return toSegments(body, marks).map((segment, index) => {
     if (!segment.marked) {
       // A plain string child — React escapes it. Never innerHTML.
       return <React.Fragment key={index}>{segment.text}</React.Fragment>;
@@ -157,47 +189,84 @@ function renderBody(
         span={segment.span}
         text={segment.text}
         flagged={flagged}
-        open={openSpan === id}
-        onToggle={() => onToggleSpan(openSpan === id ? null : id)}
+        pinned={openSpan === id}
+        onTogglePin={() => onToggleSpan(openSpan === id ? null : id)}
       />
     );
   });
 }
+
+/** Long enough that crossing a mark on the way elsewhere does not open it. */
+const HOVER_DELAY_MS = 120;
 
 function Mark({
   id,
   span,
   text,
   flagged,
-  open,
-  onToggle,
+  pinned,
+  onTogglePin,
 }: {
   id: string;
   span: Span;
   text: string;
   flagged: boolean;
-  open: boolean;
-  onToggle: () => void;
+  pinned: boolean;
+  onTogglePin: () => void;
 }) {
+  const [hovered, setHovered] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const open = pinned || hovered;
   const fromAgent = span.authorRole !== "customer";
   const palette = kindPalette(span.kind);
+  const uncertain = span.confidence < 0.7;
+
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+  }, []);
+
+  const openSoon = () => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setHovered(true), HOVER_DELAY_MS);
+  };
+
+  const closeNow = () => {
+    if (timer.current) clearTimeout(timer.current);
+    setHovered(false);
+  };
 
   return (
-    <span style={styles.markWrap}>
+    <span
+      style={styles.markWrap}
+      onMouseEnter={openSoon}
+      onMouseLeave={closeNow}
+    >
       <button
         type="button"
         aria-expanded={open}
         aria-label={`${formatKind(span.kind)}: ${span.display}`}
-        onClick={onToggle}
+        onClick={onTogglePin}
+        // Keyboard users get the same reveal: hover alone would make every
+        // annotation unreachable without a mouse.
+        onFocus={() => setHovered(true)}
+        onBlur={() => setHovered(false)}
         style={{
           ...styles.mark,
-          // Agent text is record, not claim. Outlined rather than filled, so a
-          // number staff typed never reads as something the customer said.
-          ...(fromAgent
-            ? { background: "transparent", boxShadow: `inset 0 0 0 1px ${palette.color}` }
-            : { background: palette.background }),
-          color: palette.color,
+          color: "inherit",
+          // An underline rather than a filled chip. The message has to keep
+          // reading as the customer's writing; a row of coloured tags does not.
+          textDecorationLine: "underline",
+          textDecorationColor: palette.color,
+          textDecorationThickness: 2,
+          textUnderlineOffset: 3,
+          // A guess is drawn as a guess.
+          textDecorationStyle: uncertain ? "dotted" : "solid",
+          // Agent text is record, not claim — dimmer, so a number staff typed
+          // never reads as something the customer said.
+          opacity: fromAgent ? 0.75 : 1,
           ...(flagged ? styles.markFlagged : {}),
+          ...(open ? { background: palette.background } : {}),
         }}
       >
         {text}
@@ -208,6 +277,18 @@ function Mark({
 }
 
 // ─── Formatting ──────────────────────────────────────────────────────────────
+
+function formatAsk(ask: string): string {
+  const labels: Record<string, string> = {
+    refund_request: "a refund",
+    cancellation_request: "a cancellation",
+    return_request: "a return",
+    status_check: "a status update",
+    reship_request: "a replacement shipment",
+    escalation_request: "to speak to a manager",
+  };
+  return labels[ask] ?? ask.replace(/_/g, " ");
+}
 
 export function formatKind(kind: string): string {
   const labels: Record<string, string> = {
@@ -245,6 +326,14 @@ function formatTime(iso: string): string {
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
 const styles: Record<string, React.CSSProperties> = {
+  intent: {
+    display: "flex",
+    alignItems: "baseline",
+    gap: 6,
+    paddingBottom: 4,
+  },
+  intentLabel: { fontSize: 11, color: "#68737d" },
+  intentValue: { fontSize: 13, fontWeight: 600, color: "#2f3941" },
   thread: {
     padding: "12px 16px",
     display: "flex",
@@ -328,15 +417,18 @@ const styles: Record<string, React.CSSProperties> = {
   },
   mark: {
     border: "none",
-    borderRadius: 3,
-    padding: "1px 3px",
+    background: "transparent",
+    borderRadius: 2,
+    padding: 0,
     margin: 0,
+    // Identical to the surrounding prose. Only the underline distinguishes it.
     font: "inherit",
-    fontWeight: 600,
-    cursor: "pointer",
+    color: "inherit",
+    cursor: "help",
     lineHeight: "inherit",
   },
   markFlagged: {
-    boxShadow: "inset 0 0 0 1.5px #cc3340",
+    textDecorationColor: "#cc3340",
+    background: "#fff0ee",
   },
 };

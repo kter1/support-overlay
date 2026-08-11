@@ -165,9 +165,15 @@ function CtaButton({
 }
 
 const styles: Record<string, React.CSSProperties> = {
+  // Actions are the second step, not the first. Full-width primary buttons
+  // above the message made the panel look like a form to complete, when the
+  // job is to read what the customer wrote and then decide.
   panel: {
-    padding: "12px 16px",
+    padding: "10px 16px",
     borderBottom: "1px solid #f0f0f0",
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 6,
   },
   noActions: {
     padding: "12px 16px",
@@ -184,14 +190,13 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 10,
   },
   ctaRow: {
-    marginBottom: 8,
+    marginBottom: 0,
   },
   ctaButton: {
-    width: "100%",
-    padding: "10px 16px",
-    border: "none",
-    borderRadius: 6,
-    fontSize: 13,
+    padding: "6px 12px",
+    border: "1px solid #d8dcde",
+    borderRadius: 5,
+    fontSize: 12,
     fontWeight: 500,
     cursor: "pointer",
     textAlign: "center" as const,
@@ -202,12 +207,14 @@ const styles: Record<string, React.CSSProperties> = {
     transition: "background 0.15s",
   },
   ctaPrimary: {
-    background: "#1f73b7",
-    color: "white",
+    background: "white",
+    color: "#1f73b7",
+    borderColor: "#a8c8e4",
+    fontWeight: 600,
   },
   ctaSecondary: {
-    background: "#e9ebed",
-    color: "#2f3941",
+    background: "white",
+    color: "#68737d",
   },
   ctaDisabled: {
     opacity: 0.5,

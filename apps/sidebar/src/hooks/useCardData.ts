@@ -162,14 +162,17 @@ interface ApiCardResponse {
         excerpt?: string;
         rule?: string;
         reference?: string | null;
-        resolved?: {
+        matched_on?: string | null;
+        candidates?: Array<{
           provider: string;
           recordType: string;
           reference: string;
           status: string | null;
           amountCents: number | null;
           currency: string | null;
-        } | null;
+          occurredAt: string | null;
+          description: string | null;
+        }>;
       }>;
     }>;
   } | null;
@@ -392,7 +395,8 @@ function normalizeContext(api: ApiCardResponse): TicketContext | null {
                     excerpt,
                     rule: a.rule ?? "",
                     reference: a.reference ?? null,
-                    resolved: a.resolved ?? null,
+                    candidates: Array.isArray(a.candidates) ? a.candidates : [],
+                    matchedOn: a.matched_on ?? null,
                   },
                 ];
               }),

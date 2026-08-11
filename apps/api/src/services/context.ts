@@ -12,14 +12,16 @@
  */
 import { query } from "../db/pool";
 
-/** What a reference turned out to be. Null until a provider confirmed it. */
-export interface ResolvedReference {
+/** One record a span could be referring to. */
+export interface CandidateRecord {
   provider: string;
   recordType: string;
   reference: string;
   status: string | null;
   amountCents: number | null;
   currency: string | null;
+  occurredAt: string | null;
+  description: string | null;
 }
 
 export interface Annotation {
@@ -36,7 +38,14 @@ export interface Annotation {
   rule: string;
   /** The identifier as written, for references. Null for other kinds. */
   reference: string | null;
-  resolved: ResolvedReference | null;
+  /**
+   * Every record this span could mean — often none, sometimes several. Never
+   * narrowed to one: two orders on the same day is a question for the agent,
+   * and a single plausible answer is what stops someone looking further.
+   */
+  candidates: CandidateRecord[];
+  /** How the match was made, so the panel can say why. */
+  matchedOn: string | null;
 }
 
 /** One piece of the thread, with the spans that fall inside it. */
@@ -77,7 +86,8 @@ interface StoredAnnotation {
   excerpt?: string;
   rule?: string;
   reference?: string | null;
-  resolved?: ResolvedReference | null;
+  candidates?: CandidateRecord[] | null;
+  matched_on?: string | null;
 }
 
 interface ContextRow {
@@ -218,7 +228,8 @@ function toAnnotation(stored: StoredAnnotation): Annotation[] {
       excerpt,
       rule: stored.rule ?? "",
       reference: stored.reference ?? null,
-      resolved: stored.resolved ?? null,
+      candidates: Array.isArray(stored.candidates) ? stored.candidates : [],
+      matchedOn: stored.matched_on ?? null,
     },
   ];
 }

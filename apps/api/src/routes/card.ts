@@ -164,7 +164,8 @@ export async function cardRoutes(app: FastifyInstance): Promise<void> {
                   excerpt: a.excerpt,
                   rule: a.rule,
                   reference: a.reference,
-                  resolved: a.resolved,
+                  candidates: a.candidates,
+                  matched_on: a.matchedOn,
                 })),
               })),
             }

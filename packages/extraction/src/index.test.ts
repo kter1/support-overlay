@@ -356,4 +356,102 @@ describe("readConversation", () => {
       expect(order?.provenance.excerpt.trim()).toBe(order?.provenance.excerpt);
     });
   });
+
+  describe("dates as people actually write them", () => {
+    /**
+     * The forms that appear in real support email. Bare month/day matched
+     * nothing at all before this — the numeric rule required a year — which is
+     * why a message saying "On 8/1 I ordered" yielded no date.
+     */
+    function datesIn(text: string, written = "2026-08-05") {
+      return readConversation([
+        {
+          id: "c1",
+          kind: "comment",
+          authorRole: "customer",
+          createdAt: new Date(written),
+          text,
+        },
+      ]).signals.filter((s) => s.kind === "date");
+    }
+
+    it("reads a bare slash date", () => {
+      const [date] = datesIn("On 8/1 I ordered food which never came");
+      expect(date.provenance.excerpt).toBe("8/1");
+      expect(date.display).toBe("Aug 1, 2026");
+    });
+
+    it("reads a bare dashed date", () => {
+      const [date] = datesIn("ordered 8-1 and nothing arrived");
+      expect(date?.provenance.excerpt).toBe("8-1");
+    });
+
+    it("marks the year as not written, so evidence can settle it later", () => {
+      const [bare] = datesIn("On 8/1 I ordered");
+      const [full] = datesIn("On 8/1/2026 I ordered");
+
+      expect(bare.value.yearWritten).toBe(false);
+      expect(full.value.yearWritten).toBe(true);
+    });
+
+    it("does not re-read the day and month of a full date as a bare one", () => {
+      // "12/25" sits inside "12/25/2026"; the fuller rule claims it first.
+      const dates = datesIn("ordered 12/25/2026 and it never came");
+      expect(dates).toHaveLength(1);
+      expect(dates[0].provenance.excerpt).toBe("12/25/2026");
+    });
+
+    it("assumes the most recent occurrence, never a future one", () => {
+      // Written in January, referring to December: last year, not next.
+      const [date] = datesIn("I ordered on 12/28 and it never came", "2026-01-05");
+      expect(date.display).toBe("Dec 28, 2025");
+    });
+
+    it("is more confident when a preposition makes it a date", () => {
+      const [withContext] = datesIn("the order from 8/1 never came");
+      const [bare] = datesIn("reference 8/1 attached");
+
+      expect(withContext.confidence).toBeGreaterThan(bare.confidence);
+    });
+
+    it("declines numbers that cannot be a date in any ordering", () => {
+      expect(datesIn("the ratio was 40/50 across the board")).toHaveLength(0);
+    });
+
+    it("reads an ordinal only when a preposition makes it temporal", () => {
+      expect(datesIn("I ordered on the 3rd")[0]?.provenance.excerpt).toBe("on the 3rd");
+      // "the 3rd time" is a count. Underlining it would train agents to ignore
+      // the underlines.
+      expect(datesIn("this is the 3rd time I have written")).toHaveLength(0);
+    });
+
+    it("reads a month name with no year", () => {
+      const [date] = datesIn("ordered Aug 1 and it never arrived");
+      expect(date.display).toBe("Aug 1, 2026");
+      expect(date.value.yearWritten).toBe(false);
+    });
+
+    it("finds every value in the brief's own message", () => {
+      const text =
+        "Hello, I am writing to request a refund. On 8/1 I ordered food from " +
+        "Mcdonalds which never came. I would like the $39 to be credited to my " +
+        "payment method. Thanks";
+
+      const context = readConversation([
+        {
+          id: "c1",
+          kind: "comment",
+          authorRole: "customer",
+          createdAt: new Date("2026-08-05"),
+          text,
+        },
+      ]);
+
+      const found = context.signals.map((s) => s.provenance.excerpt);
+      expect(found).toContain("8/1");
+      expect(found).toContain("$39");
+      expect(context.leads.claimedAmountCents).toBe(3900);
+      expect(context.leads.primaryAsk?.value.ask).toBe("refund_request");
+    });
+  });
 });

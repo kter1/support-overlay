@@ -18,12 +18,12 @@ describe("demo seed", () => {
   });
 
   it("loads every demo scenario", async () => {
-    // Four scenarios, five issues: the duplicate-refund scenario needs two,
+    // Five scenarios, six issues: the duplicate-refund scenario needs two,
     // since the point of it is what one ticket knows about another.
     const result = await db.driver.query<{ n: number }>(
       `SELECT count(*)::int AS n FROM issues`
     );
-    expect(result.rows[0].n).toBe(5);
+    expect(result.rows[0].n).toBe(6);
 
     const tickets = await db.driver.query<{ zendesk_ticket_id: string }>(
       `SELECT zendesk_ticket_id FROM issue_tickets ORDER BY zendesk_ticket_id`
@@ -34,7 +34,37 @@ describe("demo seed", () => {
       "10003",
       "10004",
       "10005",
+      "10006",
     ]);
+  });
+
+  it("resolves the plain-email ticket to real records", async () => {
+    // The scenario the overlay exists for: no order number, no charge id, just
+    // a date and an amount in prose. If these stop resolving, the demo shows
+    // underlines that answer nothing when hovered.
+    const result = await db.driver.query<{
+      kind: string;
+      excerpt: string;
+      matched_on: string | null;
+      candidates: number;
+    }>(
+      `SELECT a->>'kind' AS kind,
+              a->>'excerpt' AS excerpt,
+              a->>'matched_on' AS matched_on,
+              jsonb_array_length(COALESCE(a->'candidates', '[]'::jsonb)) AS candidates
+         FROM issue_context c
+         CROSS JOIN LATERAL jsonb_array_elements(c.annotations) a
+         JOIN issue_tickets t
+           ON t.issue_id = c.issue_id AND t.zendesk_ticket_id = '10006'`
+    );
+
+    const date = result.rows.find((r) => r.excerpt === "8/1");
+    const money = result.rows.find((r) => r.excerpt === "$39");
+
+    expect(date?.matched_on).toBe("date");
+    expect(date?.candidates).toBeGreaterThan(0);
+    expect(money?.matched_on).toBe("amount");
+    expect(money?.candidates).toBeGreaterThan(0);
   });
 
   it("seeds a duplicate-refund case the history layer will catch", async () => {

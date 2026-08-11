@@ -12,6 +12,13 @@
  * would ever have.
  */
 import { readConversation, TextSource } from "@iisl/extraction";
+import { seedDemoProviderRecords } from "./demo-records";
+import {
+  loadCustomerCorpus,
+  resolveSpan,
+  EMPTY_CORPUS,
+  CustomerCorpus,
+} from "../../apps/api/src/services/corpus";
 
 /** The slice of a database client this needs. */
 export interface SeedClient {
@@ -34,6 +41,10 @@ interface MessageRow {
  * Returns the number of conversations processed so callers can report it.
  */
 export async function generateSeedAnnotations(client: SeedClient): Promise<number> {
+  // The provider side of the demo. Without it a hover over "8/1" or "$39" has
+  // nothing to find, which is the exact moment the overlay exists to show.
+  seedDemoProviderRecords();
+
   const messages = (await client.query(
     `SELECT tenant_id, issue_id, source_id, kind, author_role, body, created_at
        FROM issue_messages
@@ -48,11 +59,19 @@ export async function generateSeedAnnotations(client: SeedClient): Promise<numbe
     byIssue.set(row.issue_id, rows);
   }
 
-  // The demo already has provider evidence seeded. Attaching it to the spans
-  // that name it is what makes a click on "order #1001" answer the question it
-  // raises; without it the popover can only report that nothing was found,
-  // which is true of the fixture but not of the product.
-  const resolutions = await loadResolutions(client);
+  // Resolve every span the way production does — against the customer's real
+  // records, through the same code path. A demo that resolved by some other
+  // route would be a demo of something the product does not do.
+  const corpusByIssue = new Map<string, CustomerCorpus>();
+  for (const issueId of byIssue.keys()) {
+    const customerId = await customerFor(client, issueId);
+    corpusByIssue.set(
+      issueId,
+      customerId
+        ? await loadCustomerCorpus(customerId, process.env.SHOPIFY_SHOP ?? "demo")
+        : EMPTY_CORPUS
+    );
+  }
 
   for (const [issueId, rows] of byIssue) {
     const sources: TextSource[] = rows.map((row) => ({
@@ -64,28 +83,32 @@ export async function generateSeedAnnotations(client: SeedClient): Promise<numbe
     }));
 
     const context = readConversation(sources);
+    const corpus = corpusByIssue.get(issueId) ?? EMPTY_CORPUS;
 
-    const annotations = context.signals.map((signal) => ({
-      kind: signal.kind,
-      display: signal.display,
-      confidence: signal.confidence,
-      author_role: signal.authorRole,
-      source_id: signal.provenance.sourceId,
-      source_kind: signal.provenance.sourceKind,
-      start: signal.provenance.start,
-      end: signal.provenance.end,
-      excerpt: signal.provenance.excerpt,
-      rule: signal.provenance.rule,
-      // The identifier as written, kept whether or not a provider confirmed
-      // it: history matches on what the customer typed, so a span must be
-      // flaggable even when the lookup found nothing.
-      reference: isReference(signal.kind)
-        ? (signal.value as { id: string }).id
-        : null,
-      resolved: isReference(signal.kind)
-        ? resolutions.get(issueId)?.get((signal.value as { id: string }).id) ?? null
-        : null,
-    }));
+    const annotations = context.signals.map((signal) => {
+      const resolution = resolveSpan(signal, corpus, new Map());
+
+      return {
+        kind: signal.kind,
+        display: signal.display,
+        confidence: signal.confidence,
+        author_role: signal.authorRole,
+        source_id: signal.provenance.sourceId,
+        source_kind: signal.provenance.sourceKind,
+        start: signal.provenance.start,
+        end: signal.provenance.end,
+        excerpt: signal.provenance.excerpt,
+        rule: signal.provenance.rule,
+        // The identifier as written, kept whether or not a provider confirmed
+        // it: history matches on what the customer typed, so a span must be
+        // flaggable even when the lookup found nothing.
+        reference: isReference(signal.kind)
+          ? (signal.value as { id: string }).id
+          : null,
+        candidates: resolution.candidates,
+        matched_on: resolution.matchedOn,
+      };
+    });
 
     // Insert, not update: only two of the seeded issues carried a context row,
     // so an UPDATE silently left the rest with no thread to render.
@@ -121,79 +144,16 @@ function isReference(kind: string): boolean {
   return kind === "order_reference" || kind === "payment_reference";
 }
 
-interface ResolvedReference {
-  provider: string;
-  recordType: string;
-  reference: string;
-  status: string | null;
-  amountCents: number | null;
-  currency: string | null;
-}
-
-interface EvidenceRow {
-  issue_id: string;
-  source_system: string;
-  refund_status: string | null;
-  refund_amount_cents: number | null;
-  refund_currency: string | null;
-  order_id: string | null;
-  charge_id: string | null;
-  normalized_data: Record<string, unknown> | null;
-}
-
-/**
- * Index the seeded provider evidence by the reference a customer would write.
- *
- * Keyed by both the provider's id and the order *name* the customer sees,
- * because those differ and the text can carry either.
- */
-async function loadResolutions(
-  client: SeedClient
-): Promise<Map<string, Map<string, ResolvedReference>>> {
+/** The customer an issue belongs to, or null for an anonymous ticket. */
+async function customerFor(
+  client: SeedClient,
+  issueId: string
+): Promise<string | null> {
   const result = (await client.query(
-    `SELECT issue_id, source_system, refund_status, refund_amount_cents,
-            refund_currency, order_id, charge_id, normalized_data
-       FROM evidence_normalized`
-  )) as { rows: EvidenceRow[] };
+    `SELECT customer_id FROM issues WHERE id = $1`,
+    [issueId]
+  )) as { rows: Array<{ customer_id: string | null }> };
 
-  const byIssue = new Map<string, Map<string, ResolvedReference>>();
-
-  for (const row of result.rows) {
-    const forIssue = byIssue.get(row.issue_id) ?? new Map<string, ResolvedReference>();
-    const data = row.normalized_data ?? {};
-    const orderName = typeof data.shopifyOrderName === "string" ? data.shopifyOrderName : null;
-
-    if (row.charge_id) {
-      forIssue.set(row.charge_id, {
-        provider: "stripe",
-        recordType: "charge",
-        reference: row.charge_id,
-        status: row.refund_status,
-        amountCents: row.refund_amount_cents,
-        currency: row.refund_currency,
-      });
-    }
-
-    for (const key of [row.order_id, orderName?.replace(/^#/, "")]) {
-      if (!key) continue;
-      forIssue.set(key, {
-        provider: "shopify",
-        recordType: "order",
-        reference: orderName ?? key,
-        status:
-          typeof data.shopifyFinancialStatus === "string"
-            ? data.shopifyFinancialStatus
-            : row.refund_status,
-        amountCents:
-          typeof data.shopifyOrderTotal === "number"
-            ? data.shopifyOrderTotal
-            : row.refund_amount_cents,
-        currency: row.refund_currency,
-      });
-    }
-
-    byIssue.set(row.issue_id, forIssue);
-  }
-
-  return byIssue;
+  const customerId = result.rows[0]?.customer_id ?? null;
+  return customerId && customerId.trim() !== "" ? customerId : null;
 }

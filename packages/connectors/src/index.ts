@@ -20,6 +20,7 @@ export {
 } from "./stripe/adapter";
 export {
   ShopifyAdapter,
+  shopifySimulator,
   SourceUnavailableError,
   type ShopifyOrder,
 } from "./shopify/adapter";

@@ -19,7 +19,8 @@ function span(start: number, end: number, over: Partial<Span> = {}): Span {
     excerpt: "",
     rule: "test",
     reference: null,
-    resolved: null,
+    candidates: [],
+    matchedOn: null,
     ...over,
   };
 }

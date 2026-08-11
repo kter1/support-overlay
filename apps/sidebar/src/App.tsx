@@ -20,6 +20,7 @@ import {
 } from "./zaf";
 
 const DEMO_TICKETS = [
+  { id: "10006", label: "Plain email — no order number", emoji: "✉️" },
   { id: "10001", label: "Happy path — refund confirmed", emoji: "✅" },
   { id: "10002", label: "Degraded — source unavailable", emoji: "⚠️" },
   { id: "10003", label: "Awaiting operator reconciliation", emoji: "🔄" },
@@ -48,7 +49,7 @@ function ticketFromUrl(): string | null {
 export default function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [selectedTicket, setSelectedTicket] = useState(
-    () => ticketFromUrl() ?? "10001"
+    () => ticketFromUrl() ?? "10006"
   );
 
   useEffect(() => {

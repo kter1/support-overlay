@@ -43,6 +43,13 @@ import {
   EXTRACTOR_VERSION,
 } from "@iisl/extraction";
 import { ActorType, SourceSystem, isTimeoutError } from "@iisl/shared";
+import {
+  loadCustomerCorpus,
+  resolveSpan,
+  CustomerCorpus,
+  CandidateRecord,
+  EMPTY_CORPUS,
+} from "./corpus";
 
 const NORMALIZER_VERSION = "normalize_v1";
 
@@ -76,11 +83,23 @@ export async function ingestTicketContext(
   // ── 1. Read the conversation ──────────────────────────────────────────────
   const conversation = await readTicket(zendeskTicketId, unavailable);
   const sources = toTextSources(conversation, zendeskTicketId);
+
+  // ── 2. Read what this customer has bought ─────────────────────────────────
+  //
+  // Before extraction, not after: a span like "8/1" or "$39" can only be
+  // resolved against real records, and merchant recognition needs to know which
+  // merchants this customer has actually used. Skipped entirely for an
+  // anonymous ticket — see loadCustomerCorpus.
+  const corpus = await loadCorpusForIssue(tenantId, issueId);
+
   const context = readConversation(sources);
 
   await recordExtraction(tenantId, issueId, zendeskTicketId, context);
 
-  // ── 2. Look up the real records ───────────────────────────────────────────
+  // ── 3. Look up records named outright in the text ─────────────────────────
+  //
+  // Kept alongside the corpus: a charge the customer names may be older than
+  // the corpus window, and an explicit identifier deserves a direct read.
   const stripe = await lookupStripe(context, unavailable);
   const shopify = await lookupShopify(context, unavailable);
 
@@ -95,7 +114,8 @@ export async function ingestTicketContext(
       tenantId,
       issueId,
       context,
-      resolveAnnotations(context, stripe, shopify)
+      corpus,
+      explicitRecords(stripe, shopify)
     );
 
     if (stripe) {
@@ -511,41 +531,32 @@ async function persistThread(
   }
 }
 
-/** What an extracted reference turned out to be, once looked up. */
-interface ResolvedReference {
-  provider: string;
-  recordType: string;
-  reference: string;
-  status: string | null;
-  amountCents: number | null;
-  currency: string | null;
-}
 
 /**
- * Attach provider records to the spans that produced them.
+ * Records named outright in the ticket text, looked up by identifier.
  *
- * Only the reference the pipeline actually looked up can resolve — the leads.
- * A second charge id mentioned in passing is left unresolved rather than
- * decorated with the first one's record, because the popover states what a
- * span *is*, and a borrowed record there would be a confident lie.
+ * Kept separate from the corpus because they take precedence: a charge the
+ * customer wrote down deserves the record for *that* charge, even if it falls
+ * outside the window of recent history.
  */
-function resolveAnnotations(
-  context: ConversationContext,
+function explicitRecords(
   stripe: StripeEvidence | null,
   shopify: ShopifyEvidence | null
-): Map<string, ResolvedReference> {
-  const resolved = new Map<string, ResolvedReference>();
+): Map<string, CandidateRecord> {
+  const records = new Map<string, CandidateRecord>();
 
   if (stripe) {
     for (const reference of [stripe.chargeId, stripe.refundId]) {
       if (!reference) continue;
-      resolved.set(reference, {
+      records.set(reference, {
         provider: "stripe",
         recordType: reference === stripe.refundId ? "refund" : "charge",
         reference,
         status: stripe.refundStatus,
         amountCents: stripe.refundAmountCents ?? stripe.chargeAmountCents,
         currency: stripe.currency,
+        occurredAt: null,
+        description: null,
       });
     }
   }
@@ -555,22 +566,51 @@ function resolveAnnotations(
     // its own id. Key both so the span resolves whichever the text carried.
     for (const reference of [
       shopify.orderId,
-      context.leads.orderReference,
       shopify.orderName?.replace(/^#/, ""),
     ]) {
       if (!reference) continue;
-      resolved.set(reference, {
+      records.set(reference, {
         provider: "shopify",
         recordType: "order",
         reference: shopify.orderName ?? shopify.orderId,
         status: shopify.financialStatus,
         amountCents: shopify.orderTotalCents,
         currency: shopify.currency,
+        occurredAt: null,
+        description: null,
       });
     }
   }
 
-  return resolved;
+  return records;
+}
+
+/**
+ * Read this issue's customer, then their recent history.
+ *
+ * The customer id lives on the issue rather than in the conversation, so this
+ * is a database read before any provider call. A missing customer yields an
+ * empty corpus, which is the correct answer for an anonymous ticket.
+ */
+async function loadCorpusForIssue(
+  tenantId: string,
+  issueId: string
+): Promise<CustomerCorpus> {
+  const result = await query<{ customer_id: string | null }>(
+    `SELECT customer_id FROM issues WHERE tenant_id = $1 AND id = $2`,
+    [tenantId, issueId]
+  );
+
+  const customerId = result.rows[0]?.customer_id ?? null;
+  if (!customerId) return EMPTY_CORPUS;
+
+  try {
+    return await loadCustomerCorpus(customerId, process.env.SHOPIFY_SHOP ?? "demo");
+  } catch {
+    // A corpus buys annotations, not correctness. Losing it must never cost the
+    // ticket, so an unreadable history degrades to an unannotated message.
+    return EMPTY_CORPUS;
+  }
 }
 
 /**
@@ -587,7 +627,8 @@ async function persistContext(
   tenantId: string,
   issueId: string,
   context: ConversationContext,
-  resolved: Map<string, ResolvedReference>
+  corpus: CustomerCorpus,
+  explicit: Map<string, CandidateRecord>
 ): Promise<void> {
   const annotations = context.signals.map((signal) => {
     const reference =
@@ -595,9 +636,19 @@ async function persistContext(
         ? (signal.value as { id: string }).id
         : null;
 
+    const resolution = resolveSpan(signal, corpus, explicit);
+
+    // A year the customer never wrote, settled by an actual purchase. The
+    // display has to follow, or the panel shows one year and its own evidence
+    // shows another.
+    const display =
+      resolution.resolvedYear !== null
+        ? signal.display.replace(/\b\d{4}\b/, String(resolution.resolvedYear))
+        : signal.display;
+
     return {
       kind: signal.kind,
-      display: signal.display,
+      display,
       confidence: signal.confidence,
       author_role: signal.authorRole,
       observed_at: signal.observedAt,
@@ -612,7 +663,11 @@ async function persistContext(
       // Kept whether or not the lookup succeeded: history matches on what the
       // customer wrote, so a span must stay flaggable without a provider hit.
       reference,
-      resolved: reference ? resolved.get(reference) ?? null : null,
+      // Every record the span could mean, never narrowed to one. Two orders on
+      // the same day is a question for the agent, not something to resolve by
+      // picking the first.
+      candidates: resolution.candidates,
+      matched_on: resolution.matchedOn,
     };
   });
 

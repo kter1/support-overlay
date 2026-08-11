@@ -42,6 +42,10 @@ export interface StripeCharge {
   refunded: boolean;
   amount_refunded: number;
   created: number;
+  /** Needed to answer "which of this customer's charges was $39?". */
+  customer?: string | null;
+  /** What the customer would recognise on a statement. */
+  description?: string | null;
 }
 
 export interface CreateRefundInput {
@@ -147,6 +151,40 @@ export class StripeAdapter {
     return refunds.find((r) => r.metadata?.effect_key === effectKey) ?? null;
   }
 
+  /**
+   * A customer's recent charges.
+   *
+   * Companion to the Shopify order listing: together they are the corpus the
+   * overlay resolves against when a customer names an amount or a date instead
+   * of an identifier.
+   *
+   * Returns an empty list rather than throwing. This is a read with no side
+   * effect, so an unanswered request means an unannotated message, not a
+   * failed ticket.
+   */
+  async listChargesForCustomer(customerId: string, limit = 25): Promise<StripeCharge[]> {
+    if (this.isSimulator) {
+      return stripeSimulator.listChargesForCustomer(customerId).slice(0, limit);
+    }
+
+    try {
+      const response = await fetch(
+        `https://api.stripe.com/v1/charges?customer=${encodeURIComponent(customerId)}&limit=${limit}`,
+        {
+          headers: { Authorization: `Bearer ${this.apiKey}` },
+          signal: AbortSignal.timeout(10_000),
+        }
+      );
+
+      if (!response.ok) return [];
+
+      const body = (await response.json()) as { data?: StripeCharge[] };
+      return body.data ?? [];
+    } catch {
+      return [];
+    }
+  }
+
   async getCharge(chargeId: string): Promise<StripeCharge | null> {
     if (this.isSimulator) {
       return stripeSimulator.getCharge(chargeId);
@@ -219,11 +257,13 @@ export class StripeAdapter {
 
 class StripeSimulator {
   private refunds = new Map<string, StripeRefund>();
+  private charges = new Map<string, StripeCharge>();
   private failNextWith: Error | null = null;
   private failNextEffectLanded = true;
 
   constructor() {
     this.seedFixtures();
+    this.seedChargeFixtures();
   }
 
   /**
@@ -241,9 +281,11 @@ class StripeSimulator {
 
   reset(): void {
     this.refunds.clear();
+    this.charges.clear();
     this.failNextWith = null;
     this.failNextEffectLanded = true;
     this.seedFixtures();
+    this.seedChargeFixtures();
   }
 
   createRefund(input: CreateRefundInput): StripeRefund {
@@ -294,12 +336,42 @@ class StripeSimulator {
   }
 
   getCharge(chargeId: string): StripeCharge | null {
-    const fixtures: Record<string, StripeCharge> = {
-      ch_001: { id: "ch_001", object: "charge", amount: 4999, currency: "usd", status: "succeeded", refunded: true, amount_refunded: 4999, created: 1704000000 },
-      ch_002: { id: "ch_002", object: "charge", amount: 7500, currency: "usd", status: "succeeded", refunded: false, amount_refunded: 0, created: 1704000000 },
-      ch_003: { id: "ch_003", object: "charge", amount: 3000, currency: "usd", status: "succeeded", refunded: true, amount_refunded: 3000, created: 1704000000 },
-    };
-    return fixtures[chargeId] ?? null;
+    return this.charges.get(chargeId) ?? null;
+  }
+
+  /** Add or replace a charge. */
+  seedCharge(charge: StripeCharge): void {
+    this.charges.set(charge.id, charge);
+  }
+
+  /**
+   * A customer's charges, newest first.
+   *
+   * The read behind "which charge was $39?" — a question the overlay has to
+   * answer from a value rather than an identifier.
+   */
+  listChargesForCustomer(customerId: string): StripeCharge[] {
+    return [...this.charges.values()]
+      .filter((c) => String(c.customer ?? "") === String(customerId))
+      .sort((a, b) => b.created - a.created);
+  }
+
+  private seedChargeFixtures(): void {
+    for (const charge of [
+      { id: "ch_001", amount: 4999, refunded: true, amount_refunded: 4999 },
+      { id: "ch_002", amount: 7500, refunded: false, amount_refunded: 0 },
+      { id: "ch_003", amount: 3000, refunded: true, amount_refunded: 3000 },
+    ]) {
+      this.seedCharge({
+        object: "charge",
+        currency: "usd",
+        status: "succeeded",
+        created: 1704000000,
+        customer: null,
+        description: null,
+        ...charge,
+      });
+    }
   }
 
   private seedFixtures(): void {
