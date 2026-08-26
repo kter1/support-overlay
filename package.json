@@ -1,8 +1,8 @@
 {
-  "name": "iisl",
+  "name": "support-overlay",
   "version": "0.1.0",
   "private": true,
-  "description": "support_overlay \u2014 Issue Resolution Integrity Layer (IRIL) prototype",
+  "description": "Zendesk sidebar overlay that resolves what a customer wrote against their real Stripe and Shopify records, with exactly-once side effects.",
   "workspaces": [
     "apps/*",
     "packages/*"

@@ -8,7 +8,8 @@
  * - Approval state clearly indicated when approvals_enabled = true
  */
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
+import { createIdempotencyKeyStore } from "../lib/idempotency";
 
 interface CardData {
   issueId: string;
@@ -40,6 +41,10 @@ export default function ActionPanel({ card, agentId, onActionComplete, onRefetch
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // Held across renders so a retry after a failed request sends the key the
+  // first attempt used. See lib/idempotency.ts for why that is the whole game.
+  const keys = useRef(createIdempotencyKeyStore(card.issueId));
+
   // No CTAs to show if action is in progress
   if (card.pendingActionExecutionId && !card.pendingApprovalRequestId) {
     return null;
@@ -58,7 +63,10 @@ export default function ActionPanel({ card, agentId, onActionComplete, onRefetch
     setSubmitting(cta.actionType);
     setActionError(null);
 
-    const idempotencyKey = `${card.issueId}-${cta.actionType}-${Date.now()}`;
+    // Retained if this request fails in transport, released once the server
+    // answers. A retry after a timeout therefore collides with the original
+    // execution instead of creating a second one.
+    const idempotencyKey = keys.current.keyFor(cta.actionType);
 
     try {
       const response = await apiRequest<{
@@ -80,6 +88,10 @@ export default function ActionPanel({ card, agentId, onActionComplete, onRefetch
 
       const result = response.body ?? {};
 
+      // The server answered, so this intent is settled either way: a denial is
+      // as final as a success. Only an unanswered request keeps its key.
+      keys.current.release(cta.actionType);
+
       if (!response.ok) {
         setActionError(result.deny_reason ?? response.error ?? "Action failed.");
         return;
@@ -92,12 +104,17 @@ export default function ActionPanel({ card, agentId, onActionComplete, onRefetch
       } else {
         onActionComplete("Action submitted");
       }
-
-      setTimeout(onRefetch, 600);
-    } catch (err) {
-      setActionError("Network error — please try again");
+    } catch {
+      // We do not know whether the server acted. Say so, and say that trying
+      // again is safe — because the retained key makes it safe.
+      setActionError(
+        "Couldn't reach the server. It may have gone through — trying again is safe, it won't act twice."
+      );
     } finally {
       setSubmitting(null);
+      // Refetch on both paths: after a transport failure the action may well
+      // have been performed, and the card is the only place that will say so.
+      setTimeout(onRefetch, 600);
     }
   }
 

@@ -6,8 +6,10 @@ API, a DB-backed outbox worker, PostgreSQL persistence, and provider connectors.
 ## Components
 
 - **Zendesk Sidebar** (`apps/sidebar`): React UI for agent-facing resolution
-  workflows. Currently a standalone Vite app with a scenario picker, not yet a
-  installed Zendesk app — there is no ZAF manifest.
+  workflows. Packaged as a ZAF v2 ticket sidebar app (`apps/sidebar/manifest.json`,
+  built by `npm run app:package`); it also runs as a standalone Vite app with a
+  scenario picker for local development. It has not yet been loaded into a live
+  Zendesk instance.
 - **Backend API** (`apps/api`): REST endpoints, policy evaluation, approval
   orchestration, persistence.
 - **Outbox Worker** (`apps/api/src/worker.ts`): a separate process that shares

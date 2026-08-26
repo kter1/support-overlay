@@ -1,19 +1,33 @@
 # support-overlay
 
-A Zendesk sidebar and backend prototype for policy-driven issue resolution:
-evidence-backed resolution cards, approval workflows, and — the part that
-matters — exactly-once side effects against Stripe and Zendesk.
+A Zendesk sidebar that reads the customer's own words and resolves them against
+the merchant's real records — then acts on that with exactly-once guarantees
+against Stripe, Shopify and Zendesk.
 
-The central problem it addresses: when an agent (or an AI) triggers a refund and
-the API call times out, did the refund happen? Treating that as a retriable
-failure is how customers get refunded twice. Here it is a first-class outcome —
-`SENT_UNCERTAIN` — resolved by reading provider state, and for money movement
-never resolved by retrying.
+A customer writes:
 
-**Status: prototype, installable, exercised end to end.** The exactly-once
-machinery, matching engine, policy engine, audit trail, and the Zendesk app
-package are implemented and tested — including multi-worker contention against
-a real Postgres — and the full stack (API, worker, sidebar) has been run live:
+> Hello, I am writing to request a refund. On **8/1** I ordered food from
+> Mcdonalds which never came. I would like the **$39** to be credited to my
+> payment method. Thanks
+
+No order number, no charge id — just prose, which is the common case. The
+overlay underlines `8/1` and `$39`; hovering either one pulls the order and the
+charge behind it out of Shopify and Stripe, and says *how* it matched. Two
+orders on the same day are shown as two candidates, never silently collapsed to
+one, because a single plausible answer is exactly what stops an agent looking
+further.
+
+The second problem it addresses is what happens when the agent acts on that.
+When a refund call times out, did the refund happen? Treating that as a
+retriable failure is how customers get refunded twice. Here it is a first-class
+outcome — `SENT_UNCERTAIN` — resolved by reading provider state, and for money
+movement never resolved by retrying.
+
+**Status: prototype, installable, exercised end to end.** The overlay,
+exactly-once machinery, matching engine, policy engine, audit trail, and the
+Zendesk app package are implemented and tested — including multi-worker
+contention against a real Postgres — and the full stack (API, worker, sidebar)
+has been run live:
 auth enforced, match bands computed, an approval-gated refund executed through
 the outbox, and the audit trail exported. Connectors run against fixture
 simulators by default and have not been exercised against live provider APIs,
@@ -29,10 +43,13 @@ and the app has not been loaded in a live Zendesk instance.
 - [Testing And CI](#testing-and-ci)
 - [Contributing](#contributing)
 - [License](#license)
-- [Contact](#contact)
 
 ## Features
 
+- **The overlay.** Dates, amounts, order and payment references in the customer's
+  message are underlined in place; hovering one shows the records it resolves to,
+  the way the match was made, and the confidence. Nothing is underlined that did
+  not resolve to something, so an underline is a promise the hover can keep.
 - **Exactly-once side effects.** A transactional outbox plus an append-only
   effects ledger keyed by a deterministic `effect_key`. A crash, a restart, or a
   duplicate claim resolves to the same single side effect.
@@ -77,18 +94,21 @@ npm run demo:start
 
 That is the whole thing. The first run takes a few minutes: it installs
 dependencies, writes a `.env` with a generated database password and three
-random API tokens, starts Postgres in Docker, migrates, seeds four demo
+random API tokens, starts Postgres in Docker, migrates, seeds six demo
 tickets, and brings up the API, the worker, and the sidebar.
 
 Then open **<http://localhost:5173>**.
 
-You will see four tickets in the left rail. Click through them:
+Six tickets appear in the left rail. **Start with #10006** — it is the one the
+overlay was built for:
 
 | Ticket | What it shows |
 |---|---|
+| **#10006** | **Start here.** A plain refund email naming no identifiers. Hover the underlined `8/1` and `$39` to pull the order and charge behind them |
 | **#10001** | Happy path — evidence matches, one click resolves it |
 | **#10002** | The Shopify order is gone. Last known state is shown, and the card says so rather than pretending |
 | **#10003** | A previous action whose outcome was never confirmed, held for an operator instead of retried |
+| **#10004** | The original request behind #10005, refunded two weeks earlier |
 | **#10005** | **A refund was already issued for this order on another ticket.** The warning sits above the buttons |
 
 To stop everything: `Ctrl-C`, then `npm run infra:down`.
