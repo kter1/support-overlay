@@ -17,7 +17,7 @@ import * as os from "os";
 import * as path from "path";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { missingWorkspaceLinks, declaredWorkspacePackages } = require("./workspaces");
+const { missingWorkspaceLinks, missingWorkspaceBuilds, declaredWorkspacePackages } = require("./workspaces");
 
 let root: string;
 
@@ -98,5 +98,83 @@ describe("workspace link detection", () => {
   it("returns nothing rather than throwing on an unreadable root", () => {
     // A missing package.json must not take down startup before it can report.
     expect(declaredWorkspacePackages(path.join(root, "nope"))).toEqual([]);
+  });
+});
+
+describe("workspace build detection", () => {
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "ws-build-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  /** A library that publishes a compiled entry point, as ours all do. */
+  function library(name: string, dir: string): void {
+    writeJson(path.join(root, dir, "package.json"), {
+      name,
+      main: "dist/index.js",
+      scripts: { build: "tsc" },
+    });
+  }
+
+  function compiled(dir: string): void {
+    const file = path.join(root, dir, "dist", "index.js");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "");
+  }
+
+  it("reports a library whose entry point has never been compiled", () => {
+    // The fresh-clone case: npm links the workspace but does not build it, so
+    // the link resolves and the file behind it does not.
+    writeJson(path.join(root, "package.json"), { name: "fixture", workspaces: ["packages/*"] });
+    library("@fx/alpha", "packages/alpha");
+
+    expect(missingWorkspaceBuilds(root)).toEqual(["@fx/alpha"]);
+  });
+
+  it("reports nothing once the entry point exists", () => {
+    writeJson(path.join(root, "package.json"), { name: "fixture", workspaces: ["packages/*"] });
+    library("@fx/alpha", "packages/alpha");
+    compiled("packages/alpha");
+
+    expect(missingWorkspaceBuilds(root)).toEqual([]);
+  });
+
+  it("names only the libraries that are actually missing", () => {
+    writeJson(path.join(root, "package.json"), { name: "fixture", workspaces: ["packages/*"] });
+    library("@fx/alpha", "packages/alpha");
+    library("@fx/beta", "packages/beta");
+    compiled("packages/beta");
+
+    expect(missingWorkspaceBuilds(root)).toEqual(["@fx/alpha"]);
+  });
+
+  it("ignores apps, which declare no entry point and run from source", () => {
+    // Our two apps have a build script but no `main`. Flagging them would make
+    // every start rebuild the sidebar for nothing.
+    writeJson(path.join(root, "package.json"), {
+      name: "fixture",
+      workspaces: ["apps/*", "packages/*"],
+    });
+    writeJson(path.join(root, "apps", "web", "package.json"), {
+      name: "@fx/web",
+      scripts: { build: "vite build" },
+    });
+
+    expect(missingWorkspaceBuilds(root)).toEqual([]);
+  });
+
+  it("ignores a package that declares an entry point but builds nothing", () => {
+    // Hand-written JS with no build step: there is nothing to run to produce
+    // the file, so reporting it would send startup into a build that cannot fix it.
+    writeJson(path.join(root, "package.json"), { name: "fixture", workspaces: ["packages/*"] });
+    writeJson(path.join(root, "packages", "alpha", "package.json"), {
+      name: "@fx/alpha",
+      main: "index.js",
+    });
+
+    expect(missingWorkspaceBuilds(root)).toEqual([]);
   });
 });

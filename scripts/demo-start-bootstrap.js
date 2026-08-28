@@ -12,7 +12,7 @@ const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
 const { ENV_PATH, ensureEnvFile, loadEnvFile } = require("./lib/local-env");
-const { missingWorkspaceLinks } = require("./lib/workspaces");
+const { missingWorkspaceLinks, missingWorkspaceBuilds } = require("./lib/workspaces");
 
 const ROOT = path.resolve(__dirname, "..");
 const BIN_DIR = path.join(ROOT, "node_modules", ".bin");
@@ -69,6 +69,25 @@ function ensureDependencies() {
 }
 
 /**
+ * Compile the workspace libraries if their entry points are missing.
+ *
+ * `npm install` links a workspace but never builds it, and these packages
+ * publish `main: dist/index.js`. So on a fresh clone — the exact path the
+ * README's one command promises — the seed step failed on `Cannot find module
+ * '@iisl/extraction'`, naming a package sitting right there in the repository.
+ *
+ * Checked rather than always run, because a rebuild on every start would add
+ * time to the common case where nothing changed.
+ */
+function ensureWorkspaceBuilds() {
+  const missing = missingWorkspaceBuilds();
+  if (missing.length === 0) return;
+
+  console.log(`\nBuilding workspace libraries: ${missing.join(", ")}\n`);
+  run("npm", ["run", "build:workspace-libs"]);
+}
+
+/**
  * Configuration comes before dependencies: if the first run is going to write
  * a `.env`, say so before several quiet minutes of `npm install`.
  */
@@ -84,6 +103,9 @@ function ensureConfiguration() {
 function main() {
   ensureConfiguration();
   ensureDependencies();
+  // After install, so a freshly linked package is built rather than reported
+  // missing on the next line.
+  ensureWorkspaceBuilds();
   // The child process inherits process.env, so the loaded values reach every
   // step of the startup sequence.
   run("npm", ["run", "demo:start:internal"]);
