@@ -207,12 +207,6 @@ driven through the adapter, asserted against the effects ledger and the
 provider's own record — and `apps/api/test/concurrency.test.ts`, which races
 real workers over a shared backlog.
 
-## Security and privacy
-
-See the [security and privacy review](docs/SECURITY_REVIEW.md) for verified
-controls, dependency findings, and remaining retention/deployment requirements.
-This prototype is not cleared for production use with real customer data.
-
 ## Contributing
 
 See `CONTRIBUTING.md`.
