@@ -4,6 +4,16 @@ A Zendesk sidebar that reads the customer's own words and resolves them against
 the merchant's real records — then acts on that with exactly-once guarantees
 against Stripe, Shopify and Zendesk.
 
+## Demo video
+
+[![Watch Support Overlay: animated demo of evidence matching and refund warnings](docs/media/support-overlay-demo.gif)](https://github.com/kter1/support-overlay/raw/refs/heads/main/docs/media/support-overlay-demo.mp4)
+
+**[▶ Watch the full 35-second video](https://github.com/kter1/support-overlay/raw/refs/heads/main/docs/media/support-overlay-demo.mp4)**
+
+The demo above plays directly in this README. It shows evidence matching,
+prior-refund warnings, and unavailable-source handling using fixture simulators.
+[Walkthrough and browser checks](docs/PORTFOLIO_DEMO.md).
+
 A customer writes:
 
 > Hello, I am writing to request a refund. On **8/1** I ordered food from
@@ -79,16 +89,6 @@ and the app has not been loaded in a live Zendesk instance.
   credential never reaches the browser. See `docs/ZENDESK_APP.md`.
 - One-command local startup: `npm run demo:start`. Diagnostics: `npm run doctor`.
   Smoke checks: `npm run demo:smoke`.
-
-## Demo video
-
-[![Support Overlay workspace: conversation and merchant evidence](docs/media/support-overlay-workspace.png)](docs/media/support-overlay-demo.mp4)
-
-[Watch the workspace demo](docs/media/support-overlay-demo.mp4): follow a refund
-request from the customer's words to merchant records, then inspect prior-refund
-warnings and unavailable-source handling. Recorded against the local API and
-PostgreSQL with fixture simulators; it does not show live provider requests.
-See [the walkthrough and browser checks](docs/PORTFOLIO_DEMO.md).
 
 ## Quick Start
 
