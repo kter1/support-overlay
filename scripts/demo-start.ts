@@ -484,7 +484,6 @@ function startServices() {
 function printDemoInfo() {
   const apiPort     = process.env.API_PORT ?? "3001";
   const sidebarPort = process.env.SIDEBAR_PORT ?? "5173";
-  const opToken     = process.env.OPERATOR_TOKEN!;
 
   console.log(`
 ${c.bold}${c.green}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${c.reset}
@@ -498,8 +497,8 @@ ${c.bold}${c.green}━━━━━━━━━━━━━━━━━━━━�
   ${c.cyan}http://localhost:${apiPort}${c.reset}
   ${c.cyan}http://localhost:${apiPort}/health${c.reset}
 
-  ${c.bold}Operator token${c.reset}  ${c.dim}(Authorization: Bearer <token>)${c.reset}
-  ${c.yellow}${opToken}${c.reset}
+  ${c.bold}Credentials${c.reset}
+  ${c.dim}Stored in the private .env file; never printed in startup output.${c.reset}
 
   ${c.bold}Demo tenant ID${c.reset}
   ${c.dim}00000000-0000-0000-0000-000000000001${c.reset}

@@ -9,7 +9,7 @@
  * These tests build requests the way a provider does: sign exact bytes, then
  * check that verification accepts them and rejects everything else.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createHmac } from "crypto";
 import Fastify, { FastifyInstance } from "fastify";
 import { createTestDb, createTenant, TestDb } from "./helpers/db";
@@ -52,6 +52,8 @@ describe("webhook signature verification", () => {
   let tenantId: string;
 
   beforeEach(async () => {
+    vi.stubEnv("NODE_ENV", "test");
+    for (const flag of ["USE_ZENDESK_SIMULATOR", "USE_STRIPE_SIMULATOR", "USE_SHOPIFY_SIMULATOR"]) vi.stubEnv(flag, "true");
     db = await createTestDb();
     tenantId = await createTenant(db);
 
@@ -73,6 +75,7 @@ describe("webhook signature verification", () => {
   afterEach(async () => {
     await app.close();
     await db.close();
+    vi.unstubAllEnvs();
   });
 
   /** Sign exactly the bytes being sent, as Stripe does. */
@@ -116,6 +119,24 @@ describe("webhook signature verification", () => {
     expect(response.statusCode).toBe(401);
   });
 
+  it.each(["production", "live-provider", "unset-flags"])("disables fixture bypass in %s mode", async mode => {
+    if (mode === "production") vi.stubEnv("NODE_ENV", "production");
+    if (mode === "live-provider") vi.stubEnv("USE_STRIPE_SIMULATOR", "false");
+    if (mode === "unset-flags") vi.stubEnv("USE_ZENDESK_SIMULATOR", "");
+    const response = await app.inject({ method: "POST", url: "/webhooks/fixture", headers: { authorization: `Bearer ${WEBHOOK_TOKEN}` }, payload: { source_system: "zendesk", event_type: "ticket.created", payload: { id: "blocked-fixture", email: "private@example.invalid" } } });
+    expect(response.statusCode).toBe(404);
+    const rows = await db.driver.query("SELECT id FROM inbound_events");
+    expect(rows.rows).toHaveLength(0);
+  });
+
+  it("does not retain invalid payloads or poison a later signed event", async () => {
+    const raw = JSON.stringify({ id: "evt_poison", type: "refund.updated", customer_email: "private@example.invalid" });
+    expect((await postStripe(raw, {})).statusCode).toBe(401);
+    expect(await eventStatus("evt_poison")).toBeNull();
+    expect((await postStripe(raw, stripeHeaders(raw))).statusCode).toBe(200);
+    expect(await eventStatus("evt_poison")).toBe("PROCESSED");
+  });
+
   it("accepts a correctly signed payload", async () => {
     const raw = JSON.stringify({ id: "evt_ok", type: "charge.refunded", created: 1 });
 
@@ -147,8 +168,8 @@ describe("webhook signature verification", () => {
 
     const response = await postStripe(tampered, headers);
 
-    expect(response.statusCode).toBe(200); // ack, but not trusted
-    expect(await eventStatus("evt_tampered")).toBe("FAILED");
+    expect(response.statusCode).toBe(401);
+    expect(await eventStatus("evt_tampered")).toBeNull();
   });
 
   it("rejects a signature made with the wrong secret", async () => {
@@ -156,8 +177,8 @@ describe("webhook signature verification", () => {
 
     const response = await postStripe(raw, stripeHeaders(raw, "whsec_attacker"));
 
-    expect(response.statusCode).toBe(200);
-    expect(await eventStatus("evt_wrongkey")).toBe("FAILED");
+    expect(response.statusCode).toBe(401);
+    expect(await eventStatus("evt_wrongkey")).toBeNull();
   });
 
   it("rejects a replayed timestamp outside the tolerance window", async () => {
@@ -165,8 +186,8 @@ describe("webhook signature verification", () => {
 
     const response = await postStripe(raw, stripeHeaders(raw, STRIPE_SECRET, 3600));
 
-    expect(response.statusCode).toBe(200);
-    expect(await eventStatus("evt_replay")).toBe("FAILED");
+    expect(response.statusCode).toBe(401);
+    expect(await eventStatus("evt_replay")).toBeNull();
   });
 
   it("rejects an unsigned request", async () => {
@@ -174,8 +195,8 @@ describe("webhook signature verification", () => {
 
     const response = await postStripe(raw, {});
 
-    expect(response.statusCode).toBe(200);
-    expect(await eventStatus("evt_unsigned")).toBe("FAILED");
+    expect(response.statusCode).toBe(401);
+    expect(await eventStatus("evt_unsigned")).toBeNull();
   });
 
   it("fails closed when the tenant has no configured secret", async () => {
@@ -197,8 +218,8 @@ describe("webhook signature verification", () => {
       payload: raw,
     });
 
-    expect(response.statusCode).toBe(200);
-    expect(await eventStatus("evt_nosecret")).toBe("FAILED");
+    expect(response.statusCode).toBe(401);
+    expect(await eventStatus("evt_nosecret")).toBeNull();
   });
 
   it("verifies a Shopify base64 HMAC over raw bytes", async () => {

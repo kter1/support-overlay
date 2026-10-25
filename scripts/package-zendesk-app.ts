@@ -63,6 +63,8 @@ function main(): void {
   // ── 2. Build the sidebar bundle ────────────────────────────────────────
   execFileSync("npm", ["run", "build", "--workspace=apps/sidebar"], {
     cwd: ROOT,
+    // Installed bundles must never inherit the local demo browser credential.
+    env: { ...process.env, VITE_AGENT_TOKEN: "", VITE_API_BASE_URL: "" },
     stdio: "inherit",
   });
 

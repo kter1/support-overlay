@@ -111,7 +111,7 @@ export function parseDatabaseUrl(raw: string): ParsedDbUrl {
     url = new URL(raw);
   } catch {
     throw new Error(
-      `Cannot parse as URL. Expected format: postgresql://user:password@host:port/database\nGot: ${raw}`
+      "Cannot parse DATABASE_URL. Expected a postgresql:// URL with username, password, host, port, and database."
     );
   }
 

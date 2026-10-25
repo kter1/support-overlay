@@ -72,8 +72,8 @@ and the app has not been loaded in a live Zendesk instance.
 - **Context extracted from the conversation.** Amounts, dates, order and payment
   references, and what the customer is actually asking for are pulled from the
   ticket thread, each carrying the span of text it came from. The card shows the
-  quote next to the claim, so a wrong reading is visibly wrong. Rule-based, not
-  an LLM: this text is untrusted input on a path that moves money.
+  quote next to the claim, so a wrong reading is visibly wrong. Deterministic
+  rules process this untrusted input on a path that moves money.
 - **Customer history across tickets.** Before an agent refunds, the card says
   whether this same order or charge was already refunded on another ticket —
   the most common way a team pays twice for one purchase. Matched on identifiers
@@ -206,6 +206,12 @@ See `TESTS.md`. The two suites that matter most are
 driven through the adapter, asserted against the effects ledger and the
 provider's own record — and `apps/api/test/concurrency.test.ts`, which races
 real workers over a shared backlog.
+
+## Security and privacy
+
+See the [security and privacy review](docs/SECURITY_REVIEW.md) for verified
+controls, dependency findings, and remaining retention/deployment requirements.
+This prototype is not cleared for production use with real customer data.
 
 ## Contributing
 

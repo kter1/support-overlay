@@ -1,3 +1,4 @@
+import { safeErrorInfo } from "./middleware/logging";
 /**
  * @support-overlay/api — Outbox worker process entry point.
  *
@@ -25,6 +26,6 @@ process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
 
 startOutboxWorker().catch((err) => {
-  console.error("[worker] Fatal:", err);
+  console.error("[worker] Fatal:", safeErrorInfo(err));
   process.exit(1);
 });

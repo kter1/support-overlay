@@ -20,6 +20,7 @@
  * Ordering: uses source_event_at when present, received_at otherwise.
  */
 import { FastifyInstance, FastifyRequest } from "fastify";
+import { safeErrorInfo } from "../middleware/logging";
 import { createHmac, timingSafeEqual, createHash } from "crypto";
 import { query, withTransaction } from "../db/pool";
 import { writeAuditEventTx, AuditEventType } from "../services/audit";
@@ -41,6 +42,7 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
       const { tenantId } = request.auth;
 
       const signatureValid = await verifyZendeskSignature(request, tenantId);
+      if (!signatureValid) return reply.status(401).send({ error: "Invalid webhook signature" });
       const externalEventId =
         (request.body?.id as string) ?? generateStableId(request.body);
       const sourceEventType = request.body?.type as string | undefined;
@@ -68,6 +70,7 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
       const { tenantId } = request.auth;
 
       const signatureValid = await verifyStripeSignature(request, tenantId);
+      if (!signatureValid) return reply.status(401).send({ error: "Invalid webhook signature" });
       const externalEventId = request.body?.id as string;
       const sourceEventType = request.body?.type as string | undefined;
       const sourceEventAt = request.body?.created
@@ -96,6 +99,7 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
       const { tenantId } = request.auth;
 
       const signatureValid = await verifyShopifySignature(request, tenantId);
+      if (!signatureValid) return reply.status(401).send({ error: "Invalid webhook signature" });
       const externalEventId =
         (request.body?.id as string) ?? generateStableId(request.body);
       const sourceEventType =
@@ -126,6 +130,10 @@ export async function webhookRoutes(app: FastifyInstance): Promise<void> {
     };
   }>("/fixture", async (request, reply) => {
     const { tenantId } = request.auth;
+    const fixtureMode = process.env.NODE_ENV !== "production" &&
+      ["USE_ZENDESK_SIMULATOR", "USE_STRIPE_SIMULATOR", "USE_SHOPIFY_SIMULATOR"]
+        .every(name => process.env[name] === "true");
+    if (!fixtureMode) return reply.status(404).send({ error: "No such endpoint" });
 
     const { source_system, event_type, payload } = request.body;
     const externalEventId = `fixture_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -193,7 +201,7 @@ async function drainPendingIngestion(): Promise<void> {
       // refresh endpoint. It must never fail the inbound event.
       console.error(
         `[ingestion] Failed for issue ${job.issueId}:`,
-        err instanceof Error ? err.message : err
+        safeErrorInfo(err)
       );
     }
   }
@@ -334,7 +342,7 @@ async function ingestEvent(input: IngestInput): Promise<void> {
     // and a poison event would then retry forever.
     const errorMsg = err instanceof Error ? err.message : String(err);
     if (!errorMsg.includes("DUPLICATE")) {
-      console.error("[webhook] Ingestion error:", errorMsg);
+      console.error("[webhook] Ingestion error:", safeErrorInfo(err));
     }
     return;
   }

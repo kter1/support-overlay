@@ -1,3 +1,4 @@
+import { safeErrorInfo } from "../middleware/logging";
 /**
  * @support-overlay/api — Database access
  *
@@ -56,7 +57,7 @@ function createPool(): DbDriver {
   });
 
   pool.on("error", (err) => {
-    console.error("Unexpected PG pool error", err);
+    console.error("Unexpected PG pool error", safeErrorInfo(err));
   });
 
   return pool as unknown as DbDriver;

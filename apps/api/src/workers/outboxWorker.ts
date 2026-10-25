@@ -1,3 +1,4 @@
+import { safeErrorInfo } from "../middleware/logging";
 /**
  * @support-overlay/api — Outbox worker
  *
@@ -77,7 +78,7 @@ export async function startOutboxWorker(): Promise<void> {
       const processed = await processNextBatch();
       if (processed === 0) await sleep(POLL_INTERVAL_MS);
     } catch (err) {
-      console.error("[worker] Batch processing error:", err);
+      console.error("[worker] Batch processing error:", safeErrorInfo(err));
       await sleep(POLL_INTERVAL_MS);
     }
   }
@@ -281,7 +282,7 @@ async function blockForOperator(
     });
   });
 
-  console.warn(`[worker] BLOCKED_OPERATOR ${msg.id}: ${reason}`);
+  console.warn(`[worker] BLOCKED_OPERATOR ${msg.id}`);
 }
 
 // ─── Execution completion ────────────────────────────────────────────────────
@@ -686,7 +687,7 @@ async function reconcileStripeRefund(
     );
     return refund?.id ?? null;
   } catch (err) {
-    console.error("[worker] Stripe reconciliation read failed:", err);
+    console.error("[worker] Stripe reconciliation read failed:", safeErrorInfo(err));
     return null;
   }
 }

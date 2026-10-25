@@ -7,6 +7,7 @@
  * that carries its own tenant; see middleware/auth.ts.
  */
 import Fastify from "fastify";
+import { safeErrorInfo, safeRequestInfo } from "./middleware/logging";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
@@ -25,6 +26,7 @@ import { corsOriginRule } from "./middleware/cors";
 const server = Fastify({
   logger: {
     level: process.env.LOG_LEVEL ?? "info",
+    serializers: { req: safeRequestInfo, err: safeErrorInfo },
     // Never log credentials, even at debug level.
     redact: {
       paths: [
@@ -40,7 +42,8 @@ const server = Fastify({
   // Bound request size: webhook payloads are small, and an unbounded body is a
   // trivial way to exhaust memory.
   bodyLimit: 1_048_576,
-  trustProxy: true,
+  // Do not trust caller-supplied forwarding headers on direct connections.
+  trustProxy: false,
 });
 
 // ─── Plugins ──────────────────────────────────────────────────────────────────
@@ -111,6 +114,7 @@ server.addContentTypeParser(
 // ─── Middleware ───────────────────────────────────────────────────────────────
 
 server.addHook("onRequest", correlationIdMiddleware);
+server.addHook("onSend", async (_request, reply) => { reply.header("Cache-Control", "no-store"); });
 registerErrorHandling(server);
 
 // ─── Liveness and readiness ───────────────────────────────────────────────────

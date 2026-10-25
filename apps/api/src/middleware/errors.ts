@@ -7,6 +7,7 @@
  * literal SQL — to any caller who could trigger a 500.
  */
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { safeErrorInfo } from "./logging";
 import { z, ZodError, ZodTypeAny } from "zod";
 
 export interface ErrorBody {
@@ -87,7 +88,7 @@ function zodDetails(error: ZodError): Array<{ field: string; message: string }> 
 /**
  * Register the global error handler and 404 handler.
  *
- * Unexpected errors are logged in full and reported as a bare 500. The
+ * Unexpected errors are logged as safe metadata and reported as a bare 500. The
  * correlation id is the bridge: the caller quotes it, and it locates the real
  * error in the logs without ever putting that detail on the wire.
  */
@@ -129,7 +130,7 @@ export function registerErrorHandling(app: FastifyInstance): void {
     }
 
     request.log.error(
-      { err: error, correlationId, url: request.url, method: request.method },
+      { err: safeErrorInfo(error), correlationId, route: request.routeOptions.url, method: request.method },
       "Unhandled request error"
     );
 

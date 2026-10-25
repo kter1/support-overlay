@@ -27,11 +27,11 @@ Start the local stack with `npm run demo:start`; wait for `npm run demo:smoke`
 to pass. The browser checks use isolated HTTP fixtures and a ZAF shim, so their
 action checks never submit real actions or move money.
 
-The cloud environment includes Chromium, ffmpeg, and an external Playwright
-installation. From the repository root:
+Use Chromium, ffmpeg, and an external Playwright installation. Set the module
+path below to your installed playwright-core directory. From the repository root:
 
 ```bash
-PLAYWRIGHT_MODULE=/opt/codex/cua_node/lib/node_modules/playwright-core \
+PLAYWRIGHT_MODULE="/absolute/path/to/playwright-core" \
   node scripts/test-workspace.cjs
 ```
 
@@ -48,7 +48,7 @@ mkdir -p /workspace/.tools/playwright/ffmpeg-1011
 test -e /workspace/.tools/playwright/ffmpeg-1011/ffmpeg-linux || \
   ln -s /usr/bin/ffmpeg /workspace/.tools/playwright/ffmpeg-1011/ffmpeg-linux
 PLAYWRIGHT_BROWSERS_PATH=/workspace/.tools/playwright \
-PLAYWRIGHT_MODULE=/opt/codex/cua_node/lib/node_modules/playwright-core \
+PLAYWRIGHT_MODULE="/absolute/path/to/playwright-core" \
   node scripts/record-demo.cjs
 ffmpeg -y -i .tmp/portfolio-demo/support-overlay-demo.webm \
   -c:v libx264 -preset fast -crf 23 -pix_fmt yuv420p -movflags +faststart \

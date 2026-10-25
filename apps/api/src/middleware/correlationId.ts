@@ -12,8 +12,9 @@ export async function correlationIdMiddleware(
   request: FastifyRequest,
   reply: FastifyReply
 ): Promise<void> {
-  const correlationId =
-    (request.headers["x-correlation-id"] as string) ?? randomUUID();
+  const provided = request.headers["x-correlation-id"];
+  const correlationId = typeof provided === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(provided)
+    ? provided : randomUUID();
   request.correlationId = correlationId;
   reply.header("x-correlation-id", correlationId);
 }
