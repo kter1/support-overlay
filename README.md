@@ -80,6 +80,13 @@ and the app has not been loaded in a live Zendesk instance.
 - One-command local startup: `npm run demo:start`. Diagnostics: `npm run doctor`.
   Smoke checks: `npm run demo:smoke`.
 
+## Demo video
+
+[Watch the 34-second demo](docs/media/support-overlay-demo.mp4) showing evidence
+matching, duplicate-refund warnings, and unavailable-source handling. Recorded
+against the local API and PostgreSQL with fixture simulators; it does not show
+live Stripe, Shopify, or Zendesk requests.
+
 ## Quick Start
 
 **Prerequisites:** [Node.js 20+](https://nodejs.org) and
