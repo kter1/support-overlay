@@ -37,7 +37,7 @@ interface ActionPanelProps {
 
 import { apiRequest } from "../zaf";
 
-export default function ActionPanel({ card, agentId, onActionComplete, onRefetch }: ActionPanelProps) {
+export default function ActionPanel({ card, onActionComplete, onRefetch }: ActionPanelProps) {
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -53,7 +53,7 @@ export default function ActionPanel({ card, agentId, onActionComplete, onRefetch
   if (card.availableCtas.length === 0) {
     return (
       <div style={styles.noActions}>
-        <span style={{ color: "#68737d", fontSize: 12 }}>No actions available</span>
+        <span style={{ color: "var(--muted)", fontSize: 12 }}>No actions available</span>
       </div>
     );
   }
@@ -86,6 +86,9 @@ export default function ActionPanel({ card, agentId, onActionComplete, onRefetch
         },
       });
 
+      // apiRequest represents a transport failure as status 0. It is still
+      // an unknown outcome: retain the key just as for a thrown network error.
+      if (!response.ok && response.status === 0) throw new Error("Action outcome unknown");
       const result = response.body ?? {};
 
       // The server answered, so this intent is settled either way: a denial is
@@ -119,17 +122,18 @@ export default function ActionPanel({ card, agentId, onActionComplete, onRefetch
   }
 
   return (
-    <div style={styles.panel}>
+    <div className="action-panel" style={styles.panel}>
       {actionError && (
         <div style={styles.errorBanner}>
           {actionError}
         </div>
       )}
 
-      {card.availableCtas.map((cta) => (
+      {card.availableCtas.map((cta, index) => (
         <CtaButton
           key={cta.actionType}
           cta={cta}
+          isPrimary={index === card.availableCtas.findIndex(action => !action.disabled && !action.requiresApproval)}
           isSubmitting={submitting === cta.actionType}
           onAction={() => handleAction(cta)}
         />
@@ -140,14 +144,15 @@ export default function ActionPanel({ card, agentId, onActionComplete, onRefetch
 
 function CtaButton({
   cta,
+  isPrimary,
   isSubmitting,
   onAction,
 }: {
   cta: AvailableCta;
+  isPrimary: boolean;
   isSubmitting: boolean;
   onAction: () => void;
 }) {
-  const isPrimary = !cta.disabled && !cta.requiresApproval;
 
   return (
     <div style={styles.ctaRow}>
@@ -187,7 +192,7 @@ const styles: Record<string, React.CSSProperties> = {
   // job is to read what the customer wrote and then decide.
   panel: {
     padding: "10px 16px",
-    borderBottom: "1px solid #f0f0f0",
+    borderBottom: "1px solid var(--line)",
     display: "flex",
     flexWrap: "wrap",
     gap: 6,
@@ -195,15 +200,15 @@ const styles: Record<string, React.CSSProperties> = {
   noActions: {
     padding: "12px 16px",
     textAlign: "center",
-    borderBottom: "1px solid #f0f0f0",
+    borderBottom: "1px solid var(--line)",
   },
   errorBanner: {
-    background: "#fce8e6",
+    background: "var(--danger-soft)",
     border: "1px solid #f5c6c2",
     borderRadius: 4,
     padding: "8px 12px",
     fontSize: 12,
-    color: "#a50e0e",
+    color: "var(--danger)",
     marginBottom: 10,
   },
   ctaRow: {
@@ -211,7 +216,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   ctaButton: {
     padding: "6px 12px",
-    border: "1px solid #d8dcde",
+    border: "1px solid var(--line)",
     borderRadius: 5,
     fontSize: 12,
     fontWeight: 500,
@@ -224,14 +229,14 @@ const styles: Record<string, React.CSSProperties> = {
     transition: "background 0.15s",
   },
   ctaPrimary: {
-    background: "white",
-    color: "#1f73b7",
-    borderColor: "#a8c8e4",
+    background: "var(--accent)",
+    color: "white",
+    borderColor: "var(--accent)",
     fontWeight: 600,
   },
   ctaSecondary: {
     background: "white",
-    color: "#68737d",
+    color: "var(--muted)",
   },
   ctaDisabled: {
     opacity: 0.5,
@@ -239,7 +244,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   disabledReason: {
     fontSize: 11,
-    color: "#68737d",
+    color: "var(--muted)",
     marginTop: 4,
     paddingLeft: 4,
   },

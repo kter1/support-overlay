@@ -45,7 +45,7 @@ export default function EvidencePanel({
         </div>
       )}
 
-      <div style={styles.grid}>
+      <div className="evidence-grid" style={styles.grid}>
         {/* Stripe Evidence */}
         {text(evidenceSummary.stripeRefundId) !== "" && (
           <DetailBlock
@@ -78,8 +78,8 @@ export default function EvidencePanel({
           <span style={styles.matchLabel}>Match result</span>
           <span style={{
             ...styles.matchValue,
-            color: matchBand === "HIGH" || matchBand === "EXACT" ? "#137333" :
-                   matchBand === "MEDIUM" ? "#7a4f00" : "#a50e0e",
+            color: matchBand === "HIGH" || matchBand === "EXACT" ? "var(--accent)" :
+                   matchBand === "MEDIUM" ? "#7a4f00" : "var(--danger)",
           }}>
             {matchBand}
             {confidenceScore !== null && ` (${Math.round(confidenceScore * 100)}%)`}
@@ -95,7 +95,7 @@ function DetailBlock({ title, items }: { title: string; items: [string, string][
     <div style={styles.detailBlock}>
       <div style={styles.detailTitle}>{title}</div>
       {items.map(([label, value]) => (
-        <div key={label} style={styles.detailRow}>
+        <div className="evidence-detail-row" key={label} style={styles.detailRow}>
           <span style={styles.detailLabel}>{label}</span>
           <span style={styles.detailValue}>{value}</span>
         </div>
@@ -115,13 +115,13 @@ function formatCents(cents?: number, currency?: string): string {
 const styles: Record<string, React.CSSProperties> = {
   panel: {
     padding: "12px 16px",
-    borderBottom: "1px solid #f0f0f0",
-    background: "#f8f9fa",
+    borderBottom: "1px solid var(--line)",
+    background: "var(--canvas)",
   },
   sectionTitle: {
     fontSize: 11,
     fontWeight: 600,
-    color: "#68737d",
+    color: "var(--muted)",
     textTransform: "uppercase" as const,
     letterSpacing: 0.5,
     marginBottom: 10,
@@ -129,7 +129,7 @@ const styles: Record<string, React.CSSProperties> = {
   unavailableNote: {
     fontSize: 11,
     color: "#7a4f00",
-    background: "#fff8e1",
+    background: "var(--warning-soft)",
     padding: "6px 8px",
     borderRadius: 4,
     marginBottom: 10,
@@ -149,18 +149,18 @@ const styles: Record<string, React.CSSProperties> = {
   detailTitle: {
     fontSize: 11,
     fontWeight: 600,
-    color: "#2f3941",
+    color: "var(--text)",
     marginBottom: 6,
     paddingBottom: 4,
-    borderBottom: "1px solid #f0f0f0",
+    borderBottom: "1px solid var(--line)",
   },
   detailRow: {
     display: "flex",
     justifyContent: "space-between",
     marginBottom: 3,
   },
-  detailLabel: { fontSize: 11, color: "#68737d" },
-  detailValue: { fontSize: 11, fontWeight: 500, color: "#2f3941" },
+  detailLabel: { fontSize: 11, color: "var(--muted)" },
+  detailValue: { fontSize: 11, fontWeight: 500, color: "var(--text)" },
   matchRow: {
     display: "flex",
     justifyContent: "space-between",
@@ -168,6 +168,6 @@ const styles: Record<string, React.CSSProperties> = {
     borderTop: "1px solid #e8eaed",
     marginTop: 4,
   },
-  matchLabel: { fontSize: 12, color: "#68737d" },
+  matchLabel: { fontSize: 12, color: "var(--muted)" },
   matchValue: { fontSize: 12, fontWeight: 600 },
 };

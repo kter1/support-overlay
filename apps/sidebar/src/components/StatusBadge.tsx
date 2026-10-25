@@ -11,10 +11,10 @@ interface StatusBadgeProps {
 }
 
 const BAND_CONFIG: Record<string, { label: string; bg: string; color: string }> = {
-  EXACT:    { label: "Exact match",   bg: "#e6f4ea", color: "#137333" },
-  HIGH:     { label: "High match",    bg: "#e6f4ea", color: "#137333" },
+  EXACT:    { label: "Exact match",   bg: "var(--accent-soft)", color: "var(--accent)" },
+  HIGH:     { label: "High match",    bg: "var(--accent-soft)", color: "var(--accent)" },
   MEDIUM:   { label: "Partial match", bg: "#fef7e0", color: "#7a4f00" },
-  LOW:      { label: "Low match",     bg: "#fce8e6", color: "#a50e0e" },
+  LOW:      { label: "Low match",     bg: "var(--danger-soft)", color: "var(--danger)" },
   NO_MATCH: { label: "No match",      bg: "#f1f3f4", color: "#5f6368" },
 };
 

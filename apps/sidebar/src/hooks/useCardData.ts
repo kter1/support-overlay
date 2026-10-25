@@ -4,13 +4,13 @@
  * Polling-based (no SSE/WebSockets — spec §9 Phase 1).
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { apiRequest } from "../zaf";
 import type { ThreadMessage } from "../components/AnnotatedThread";
 
 export type { ThreadMessage };
 
-interface CardData {
+export interface CardData {
   issueId: string;
   zendeskTicketId: string;
   issueState: string;
@@ -196,7 +196,8 @@ interface ApiCardResponse {
   } | null;
 }
 
-const DEFAULT_UNAVAILABLE_REASON = "Source record is unavailable. Use the last known state and escalate if needed.";
+const DEFAULT_UNAVAILABLE_REASON =
+  "Source record is unavailable. Use the last known state and escalate if needed.";
 
 function asString(value: unknown): string | null {
   return typeof value === "string" && value.trim() !== "" ? value : null;
@@ -216,7 +217,9 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function deriveFreshnessStatus(api: ApiCardResponse): "FRESH" | "STALE" | "MISSING" {
+function deriveFreshnessStatus(
+  api: ApiCardResponse,
+): "FRESH" | "STALE" | "MISSING" {
   const isFresh = api.freshness?.is_fresh;
   const ageSeconds = api.freshness?.age_seconds;
 
@@ -231,7 +234,7 @@ function deriveFreshnessStatus(api: ApiCardResponse): "FRESH" | "STALE" | "MISSI
 function buildDefaultCtas(
   issueState: string,
   pendingActionExecutionId: string | null,
-  pendingApprovalRequestId: string | null
+  pendingApprovalRequestId: string | null,
 ): AvailableCta[] {
   if (pendingActionExecutionId || pendingApprovalRequestId) return [];
 
@@ -254,7 +257,10 @@ function buildDefaultCtas(
     ];
   }
 
-  if (issueState === "ACTION_IN_PROGRESS" || issueState === "PENDING_APPROVAL") {
+  if (
+    issueState === "ACTION_IN_PROGRESS" ||
+    issueState === "PENDING_APPROVAL"
+  ) {
     return [
       {
         actionType: "refresh_evidence",
@@ -295,7 +301,7 @@ function buildSoftWarnings(
   freshnessStatus: "FRESH" | "STALE" | "MISSING",
   isSourceUnavailable: boolean,
   sourceUnavailableReason: string | null,
-  matchBand: string | null
+  matchBand: string | null,
 ): string[] {
   const warnings: string[] = [];
 
@@ -304,9 +310,13 @@ function buildSoftWarnings(
   }
 
   if (freshnessStatus === "STALE") {
-    warnings.push("Evidence is aging. Consider refreshing before finalizing this case.");
+    warnings.push(
+      "Evidence is aging. Consider refreshing before finalizing this case.",
+    );
   } else if (freshnessStatus === "MISSING") {
-    warnings.push("Evidence is missing. Refresh evidence before taking irreversible actions.");
+    warnings.push(
+      "Evidence is missing. Refresh evidence before taking irreversible actions.",
+    );
   }
 
   if (matchBand === "LOW" || matchBand === "NO_MATCH" || matchBand === "NONE") {
@@ -320,22 +330,27 @@ function buildEvidenceSummary(
   apiSummary: Record<string, unknown> | null,
   api: ApiCardResponse,
   isSourceUnavailable: boolean,
-  sourceUnavailableReason: string | null
+  sourceUnavailableReason: string | null,
 ): Record<string, unknown> | null {
   if (apiSummary) return apiSummary;
 
   const evidence = api.evidence ?? {};
   const summary: Record<string, unknown> = {};
 
-  if (evidence.refund_status) summary.stripeRefundStatus = evidence.refund_status;
-  if (evidence.refund_amount_cents !== null && evidence.refund_amount_cents !== undefined) {
+  if (evidence.refund_status)
+    summary.stripeRefundStatus = evidence.refund_status;
+  if (
+    evidence.refund_amount_cents !== null &&
+    evidence.refund_amount_cents !== undefined
+  ) {
     summary.stripeChargeAmount = evidence.refund_amount_cents;
     summary.refundAmount = evidence.refund_amount_cents;
   }
   if (evidence.refund_currency) summary.currency = evidence.refund_currency;
   if (evidence.refund_id) summary.stripeRefundId = evidence.refund_id;
   if (isSourceUnavailable) summary.sourceUnavailable = true;
-  if (sourceUnavailableReason) summary.sourceUnavailableReason = sourceUnavailableReason;
+  if (sourceUnavailableReason)
+    summary.sourceUnavailableReason = sourceUnavailableReason;
 
   return Object.keys(summary).length > 0 ? summary : null;
 }
@@ -376,13 +391,20 @@ function normalizeContext(api: ApiCardResponse): TicketContext | null {
                 const start = asNumber(a.start);
                 const end = asNumber(a.end);
                 const display = asString(a.display);
-                const excerpt = typeof a.excerpt === "string" ? a.excerpt : null;
+                const excerpt =
+                  typeof a.excerpt === "string" ? a.excerpt : null;
 
-                if (start === null || end === null || !display || excerpt === null) {
+                if (
+                  start === null ||
+                  end === null ||
+                  !display ||
+                  excerpt === null
+                ) {
                   return [];
                 }
                 // Trust nothing about placement that the text does not confirm.
-                if (body === null || body.slice(start, end) !== excerpt) return [];
+                if (body === null || body.slice(start, end) !== excerpt)
+                  return [];
 
                 return [
                   {
@@ -443,7 +465,9 @@ function normalizeHistory(api: ApiCardResponse): CustomerHistory {
 
 function normalizeCardResponse(api: ApiCardResponse): CardData {
   const issueId = asString(api.issueId ?? api.issue_id);
-  const zendeskTicketId = asString(api.zendeskTicketId ?? api.zendesk_ticket_id);
+  const zendeskTicketId = asString(
+    api.zendeskTicketId ?? api.zendesk_ticket_id,
+  );
   const issueState = asString(api.issueState ?? api.issue_state) ?? "OPEN";
 
   if (!issueId || !zendeskTicketId) {
@@ -451,22 +475,20 @@ function normalizeCardResponse(api: ApiCardResponse): CardData {
   }
 
   const matchBand =
-    asString(api.matchBand) ??
-    asString(api.evidence?.match_band) ??
-    null;
+    asString(api.matchBand) ?? asString(api.evidence?.match_band) ?? null;
 
   const confidenceScore =
-    asNumber(api.confidenceScore) ??
-    asNumber(api.evidence?.confidence_score);
+    asNumber(api.confidenceScore) ?? asNumber(api.evidence?.confidence_score);
 
   const freshnessStatus = deriveFreshnessStatus(api);
   const isSourceUnavailable =
-    api.isSourceUnavailable ??
-    api.freshness?.is_source_unavailable ??
-    false;
+    api.isSourceUnavailable ?? api.freshness?.is_source_unavailable ?? false;
   const sourceUnavailableReason =
     asString(api.sourceUnavailableReason) ??
-    asString(asRecord(api.evidenceSummary ?? api.evidence_summary)?.sourceUnavailableReason) ??
+    asString(
+      asRecord(api.evidenceSummary ?? api.evidence_summary)
+        ?.sourceUnavailableReason,
+    ) ??
     (isSourceUnavailable ? DEFAULT_UNAVAILABLE_REASON : null);
 
   const pendingActionExecutionId =
@@ -482,26 +504,33 @@ function normalizeCardResponse(api: ApiCardResponse): CardData {
     asString(api.pending_action?.action_type) ??
     null;
   const lastActionCompletedAt =
-    asString(api.lastActionCompletedAt ?? api.last_action_completed_at) ??
-    null;
+    asString(api.lastActionCompletedAt ?? api.last_action_completed_at) ?? null;
   const evidenceFetchedAt =
-    asString(api.evidenceFetchedAt ?? api.evidence_fetched_at) ??
-    null;
+    asString(api.evidenceFetchedAt ?? api.evidence_fetched_at) ?? null;
 
   const evidenceSummary = buildEvidenceSummary(
     asRecord(api.evidenceSummary ?? api.evidence_summary),
     api,
     isSourceUnavailable,
-    sourceUnavailableReason
+    sourceUnavailableReason,
   );
 
   const availableCtas = Array.isArray(api.availableCtas)
     ? api.availableCtas
-    : buildDefaultCtas(issueState, pendingActionExecutionId, pendingApprovalRequestId);
+    : buildDefaultCtas(
+        issueState,
+        pendingActionExecutionId,
+        pendingApprovalRequestId,
+      );
 
   const softWarnings = Array.isArray(api.softWarnings)
     ? api.softWarnings
-    : buildSoftWarnings(freshnessStatus, isSourceUnavailable, sourceUnavailableReason, matchBand);
+    : buildSoftWarnings(
+        freshnessStatus,
+        isSourceUnavailable,
+        sourceUnavailableReason,
+        matchBand,
+      );
 
   return {
     issueId,
@@ -532,32 +561,44 @@ export function useCardData(zendeskTicketId: string) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const requestVersion = useRef(0);
+  const active = useRef(false);
   const refetch = useCallback(async () => {
-    const response = await apiRequest<ApiCardResponse>(
-      `/api/v1/card/${zendeskTicketId}`
-    );
-
-    if (!response.ok || !response.body) {
-      setError(
-        response.status === 404
-          ? "No resolution record exists for this ticket yet."
-          : response.error ?? "Could not load the resolution card."
+    const version = ++requestVersion.current;
+    try {
+      const response = await apiRequest<ApiCardResponse>(
+        `/api/v1/card/${zendeskTicketId}`,
       );
-      setLoading(false);
-      return;
+      if (!active.current || version !== requestVersion.current) return;
+      if (!response.ok || !response.body) {
+        setError(
+          response.status === 404
+            ? "No resolution record exists for this ticket yet."
+            : (response.error ?? "Could not load the resolution card."),
+        );
+        return;
+      }
+      setCard(normalizeCardResponse(response.body));
+      setError(null);
+    } catch {
+      if (active.current && version === requestVersion.current)
+        setError("Could not load the resolution card. Please try again.");
+    } finally {
+      if (active.current && version === requestVersion.current)
+        setLoading(false);
     }
-
-    setCard(normalizeCardResponse(response.body));
-    setError(null);
-    setLoading(false);
   }, [zendeskTicketId]);
 
-  // Fetch on mount and when ticket changes
   useEffect(() => {
+    active.current = true;
     setLoading(true);
     setCard(null);
     setError(null);
-    refetch();
+    void refetch();
+    return () => {
+      active.current = false;
+      requestVersion.current++;
+    };
   }, [zendeskTicketId, refetch]);
 
   return { card, loading, error, refetch };

@@ -13,6 +13,7 @@
  */
 
 import React, { useState } from "react";
+import Icon from "./Icon";
 import type { CustomerHistory, HistoryNotice, PriorInteraction } from "../hooks/useCardData";
 
 /**
@@ -40,7 +41,7 @@ function Notice({ notice }: { notice: HistoryNotice }) {
 
   return (
     <div style={critical ? styles.criticalNotice : styles.warningNotice}>
-      <span style={styles.noticeIcon}>{critical ? "⚠" : "ℹ"}</span>
+      <Icon name="alert" size={16} />
       <span style={critical ? styles.criticalText : styles.warningText}>
         {notice.message}
       </span>
@@ -57,7 +58,7 @@ export default function HistoryPanel({ history }: { history: CustomerHistory }) 
 
   return (
     <div style={styles.panel}>
-      <button style={styles.toggle} onClick={() => setOpen(!open)}>
+      <button aria-expanded={open} style={styles.toggle} onClick={() => setOpen(!open)}>
         <span>
           {/*
             "Other", not "Previous": the list is every other issue for this
@@ -187,16 +188,16 @@ function formatMoney(minorUnits: number, currency: string | null): string {
 
 const styles: Record<string, React.CSSProperties> = {
   criticalNotice: {
-    background: "#fff0ee",
+    background: "var(--danger-soft)",
     borderBottom: "1px solid #e8503a",
-    borderLeft: "3px solid #cc3340",
+    borderLeft: "3px solid var(--danger)",
     padding: "10px 16px",
     display: "flex",
     alignItems: "flex-start",
     gap: 8,
   },
   warningNotice: {
-    background: "#fff8e1",
+    background: "var(--warning-soft)",
     borderBottom: "1px solid #f0c040",
     padding: "9px 16px",
     display: "flex",
@@ -206,24 +207,24 @@ const styles: Record<string, React.CSSProperties> = {
   noticeIcon: { fontSize: 13, flexShrink: 0, marginTop: 1 },
   criticalText: {
     fontSize: 12,
-    color: "#8c232c",
+    color: "var(--danger)",
     lineHeight: 1.45,
     fontWeight: 500,
   },
   warningText: {
     fontSize: 12,
-    color: "#5f4b00",
+    color: "var(--warning)",
     lineHeight: 1.45,
   },
   panel: {
-    borderBottom: "1px solid #f0f0f0",
+    borderBottom: "1px solid var(--line)",
   },
   toggle: {
     width: "100%",
     padding: "8px 16px",
     background: "none",
     border: "none",
-    color: "#1f73b7",
+    color: "var(--accent)",
     fontSize: 12,
     cursor: "pointer",
     textAlign: "left",
@@ -236,7 +237,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   infoLine: {
     fontSize: 11,
-    color: "#68737d",
+    color: "var(--muted)",
     lineHeight: 1.45,
     paddingBottom: 4,
   },
@@ -245,7 +246,7 @@ const styles: Record<string, React.CSSProperties> = {
     paddingLeft: 10,
   },
   rowSameSubject: {
-    borderLeft: "2px solid #cc3340",
+    borderLeft: "2px solid var(--danger)",
   },
   rowTop: {
     display: "flex",
@@ -255,18 +256,18 @@ const styles: Record<string, React.CSSProperties> = {
   ticket: {
     fontSize: 12,
     fontWeight: 600,
-    color: "#2f3941",
+    color: "var(--text)",
   },
   date: {
     fontSize: 10,
-    color: "#c2c8cc",
+    color: "var(--muted)",
   },
   rowMeta: {
     display: "flex",
     flexWrap: "wrap",
     gap: 8,
     fontSize: 11,
-    color: "#68737d",
+    color: "var(--muted)",
     marginTop: 2,
   },
   orderRef: {
@@ -283,12 +284,12 @@ const styles: Record<string, React.CSSProperties> = {
     letterSpacing: 0.4,
     padding: "1px 5px",
     borderRadius: 3,
-    background: "#fff0ee",
-    color: "#cc3340",
+    background: "var(--danger-soft)",
+    color: "var(--danger)",
   },
   truncated: {
     fontSize: 10,
-    color: "#c2c8cc",
+    color: "var(--muted)",
     fontStyle: "italic",
   },
 };

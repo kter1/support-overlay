@@ -20,7 +20,7 @@
  * trust it.
  */
 
-import React from "react";
+import React, { useLayoutEffect, useRef, useState } from "react";
 import { Span, CandidateRecord } from "../lib/spans";
 import { formatKind, kindPalette } from "./AnnotatedThread";
 
@@ -33,16 +33,56 @@ interface Props {
 export default function AnnotationPopover({ span, flagged, id }: Props) {
   const palette = kindPalette(span.kind);
   const { candidates } = span;
+  const element = useRef<HTMLSpanElement>(null);
+  const [position, setPosition] = useState({ left: 8, top: 8 });
+  useLayoutEffect(() => {
+    const place = () => {
+      const popup = element.current;
+      const anchor = popup?.parentElement
+        ?.querySelector("button")
+        ?.getBoundingClientRect();
+      if (!popup || !anchor) return;
+      const rect = popup.getBoundingClientRect();
+      const below = anchor.bottom + 8;
+      setPosition({
+        left: Math.max(
+          8,
+          Math.min(anchor.left, window.innerWidth - rect.width - 8),
+        ),
+        top: Math.max(
+          8,
+          below + rect.height <= window.innerHeight - 8
+            ? below
+            : anchor.top - rect.height - 8,
+        ),
+      });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, []);
 
   return (
     <span
+      ref={element}
+      className="annotation-popover"
       role="dialog"
       aria-label={`Details for ${span.display}`}
       id={id}
-      style={styles.popover}
+      style={{ ...styles.popover, ...position }}
     >
       <span style={styles.head}>
-        <span style={{ ...styles.kind, background: palette.background, color: palette.color }}>
+        <span
+          style={{
+            ...styles.kind,
+            background: palette.background,
+            color: palette.color,
+          }}
+        >
           {formatKind(span.kind)}
         </span>
         <span style={styles.display}>{span.display}</span>
@@ -54,12 +94,16 @@ export default function AnnotationPopover({ span, flagged, id }: Props) {
         <>
           {candidates.length > 1 && (
             <span style={styles.ambiguous}>
-              {candidates.length} records match. Confirm which one before acting.
+              {candidates.length} records match. Confirm which one before
+              acting.
             </span>
           )}
           <span style={styles.records}>
             {candidates.map((record, i) => (
-              <Record key={`${record.provider}-${record.reference}-${i}`} record={record} />
+              <Record
+                key={`${record.provider}-${record.reference}-${i}`}
+                record={record}
+              />
             ))}
           </span>
         </>
@@ -73,8 +117,8 @@ export default function AnnotationPopover({ span, flagged, id }: Props) {
 
       <span style={styles.provenance}>
         {/* The quote proves the mark landed on the right words. */}
-        matched “{span.excerpt}”
-        {span.matchedOn && ` by ${span.matchedOn}`} · {Math.round(span.confidence * 100)}%
+        matched “{span.excerpt}”{span.matchedOn && ` by ${span.matchedOn}`} ·{" "}
+        {Math.round(span.confidence * 100)}%
         {span.authorRole !== "customer" && " · written by an agent"}
       </span>
     </span>
@@ -99,7 +143,9 @@ function Record({ record }: { record: CandidateRecord }) {
         )}
       </span>
 
-      {record.description && <span style={styles.description}>{record.description}</span>}
+      {record.description && (
+        <span style={styles.description}>{record.description}</span>
+      )}
     </span>
   );
 }
@@ -136,8 +182,22 @@ function formatDate(iso: string): string {
 
 /** Zero-decimal currencies are not divided by 100 — ¥500 is five hundred yen. */
 const ZERO_DECIMAL = new Set([
-  "bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga",
-  "pyg", "rwf", "ugx", "vnd", "vuv", "xaf", "xof", "xpf",
+  "bif",
+  "clp",
+  "djf",
+  "gnf",
+  "jpy",
+  "kmf",
+  "krw",
+  "mga",
+  "pyg",
+  "rwf",
+  "ugx",
+  "vnd",
+  "vuv",
+  "xaf",
+  "xof",
+  "xpf",
 ]);
 
 function formatMoney(minorUnits: number, currency: string | null): string {
@@ -156,22 +216,24 @@ function formatMoney(minorUnits: number, currency: string | null): string {
 
 const styles: Record<string, React.CSSProperties> = {
   popover: {
-    position: "absolute",
-    top: "calc(100% + 6px)",
+    position: "fixed",
+    maxHeight: "calc(100vh - 16px)",
+    overflowY: "auto",
     // Anchored to the left of the mark but clamped to the viewport: a Zendesk
     // sidebar is narrow, and a panel that runs off the edge is unreadable
     // exactly when the mark sits near the end of a line.
     left: 0,
-    maxWidth: "min(300px, calc(100vw - 32px))",
+    width: "min(300px, calc(100vw - 16px))",
+    maxWidth: "calc(100vw - 16px)",
     zIndex: 20,
     display: "flex",
     flexDirection: "column",
     gap: 8,
-    minWidth: 220,
-    padding: "10px 12px",
+    minWidth: 0,
+    padding: "14px 16px",
     background: "white",
-    border: "1px solid #d8dcde",
-    borderRadius: 6,
+    border: "1px solid var(--line)",
+    borderRadius: 10,
     boxShadow: "0 6px 20px rgba(0,0,0,0.14)",
     fontWeight: 400,
     fontStyle: "normal",
@@ -189,12 +251,12 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "2px 6px",
     borderRadius: 3,
   },
-  display: { fontSize: 13, fontWeight: 600, color: "#2f3941" },
-  empty: { fontSize: 11, color: "#68737d", lineHeight: 1.45 },
+  display: { fontSize: 13, fontWeight: 600, color: "var(--text)" },
+  empty: { fontSize: 11, color: "var(--muted)", lineHeight: 1.45 },
   ambiguous: {
     fontSize: 11,
     color: "#8a5300",
-    background: "#fff8e1",
+    background: "var(--warning-soft)",
     borderRadius: 4,
     padding: "5px 7px",
     lineHeight: 1.4,
@@ -207,25 +269,46 @@ const styles: Record<string, React.CSSProperties> = {
     borderLeft: "2px solid #e9ebed",
     paddingLeft: 8,
   },
-  recordHead: { display: "flex", alignItems: "baseline", gap: 6 },
-  reference: { fontSize: 12, fontWeight: 600, color: "#2f3941", fontFamily: "monospace" },
-  status: { fontSize: 10, color: "#1a6e27", textTransform: "uppercase", letterSpacing: 0.3 },
-  recordMeta: { display: "flex", gap: 8, fontSize: 11, color: "#68737d", flexWrap: "wrap" },
-  amount: { fontWeight: 600, color: "#2f3941" },
-  description: { fontSize: 11, color: "#68737d" },
+  recordHead: {
+    display: "flex",
+    alignItems: "baseline",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  reference: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: "var(--text)",
+    fontFamily: "monospace",
+  },
+  status: {
+    fontSize: 10,
+    color: "#1a6e27",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+  },
+  recordMeta: {
+    display: "flex",
+    gap: 8,
+    fontSize: 11,
+    color: "var(--muted)",
+    flexWrap: "wrap",
+  },
+  amount: { fontWeight: 600, color: "var(--text)" },
+  description: { fontSize: 11, color: "var(--muted)" },
   flag: {
     fontSize: 11,
-    color: "#8c232c",
-    background: "#fff0ee",
+    color: "var(--danger)",
+    background: "var(--danger-soft)",
     borderRadius: 4,
     padding: "6px 8px",
     lineHeight: 1.4,
   },
   provenance: {
     fontSize: 10,
-    color: "#c2c8cc",
+    color: "var(--muted)",
     lineHeight: 1.4,
-    borderTop: "1px solid #f0f0f0",
+    borderTop: "1px solid var(--line)",
     paddingTop: 6,
   },
 };

@@ -5,6 +5,7 @@
  */
 
 import React from "react";
+import Icon from "./Icon";
 
 interface DegradedBannerProps {
   isSourceUnavailable: boolean;
@@ -22,7 +23,7 @@ export default function DegradedBanner({
   if (isSourceUnavailable) {
     return (
       <div style={styles.unavailableBanner}>
-        <span style={styles.icon}>📋</span>
+        <Icon name="alert" size={17} />
         <div>
           <div style={styles.title}>Source record no longer available — case record preserved</div>
           {sourceUnavailableReason && (
@@ -40,7 +41,7 @@ export default function DegradedBanner({
 
     return (
       <div style={styles.staleBanner}>
-        <span style={styles.icon}>🕐</span>
+        <Icon name="clock" size={17} />
         <div>
           <div style={styles.title}>Evidence may not reflect the latest state</div>
           <div style={styles.detail}>
@@ -61,18 +62,18 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "flex-start",
     gap: 10,
     padding: "10px 16px",
-    background: "#f5f0ff",
-    borderBottom: "1px solid #d4c5f9",
+    background: "var(--warning-soft)",
+    borderBottom: "1px solid #f0e4c6",
   },
   staleBanner: {
     display: "flex",
     alignItems: "flex-start",
     gap: 10,
     padding: "10px 16px",
-    background: "#fff8e1",
+    background: "var(--warning-soft)",
     borderBottom: "1px solid #f0c040",
   },
   icon: { fontSize: 16, flexShrink: 0, marginTop: 1 },
-  title: { fontSize: 12, fontWeight: 500, color: "#2f3941", marginBottom: 2 },
-  detail: { fontSize: 11, color: "#68737d", lineHeight: 1.4 },
+  title: { fontSize: 12, fontWeight: 500, color: "var(--text)", marginBottom: 2 },
+  detail: { fontSize: 11, color: "var(--muted)", lineHeight: 1.4 },
 };

@@ -93,9 +93,9 @@ export default function AnnotatedThread({
   const hidden = thread.length - shown.length;
 
   return (
-    <div style={styles.thread}>
+    <div className="annotated-thread" style={styles.thread}>
       {primaryAsk && (
-        <div style={styles.intent}>
+        <div className="thread-intent" style={styles.intent}>
           <span style={styles.intentLabel}>Asking for</span>
           <span style={styles.intentValue}>{formatAsk(primaryAsk)}</span>
         </div>
@@ -134,8 +134,8 @@ function Message({
   const isCustomer = message.authorRole === "customer";
 
   return (
-    <div style={styles.message}>
-      <div style={styles.messageHead}>
+    <div className="thread-message" style={styles.message}>
+      <div className="message-header" style={styles.messageHead}>
         <span style={isCustomer ? styles.authorCustomer : styles.authorAgent}>
           {isCustomer ? "Customer" : "Agent"}
         </span>
@@ -145,7 +145,7 @@ function Message({
         <span style={styles.timestamp}>{formatTime(message.createdAt)}</span>
       </div>
 
-      <div style={isCustomer ? styles.bodyCustomer : styles.bodyAgent}>
+      <div className="message-body" style={isCustomer ? styles.bodyCustomer : styles.bodyAgent}>
         {message.redacted ? (
           <span style={styles.redacted}>
             {message.redactionReason ?? "This message has been removed."}
@@ -216,8 +216,22 @@ function Mark({
 }) {
   const [hovered, setHovered] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wrap = useRef<HTMLSpanElement>(null);
 
   const open = pinned || hovered;
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = () => {
+      if (timer.current) clearTimeout(timer.current);
+      setHovered(false);
+      if (pinned) onTogglePin();
+    };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") dismiss(); };
+    const outside = (event: PointerEvent) => { if (!wrap.current?.contains(event.target as Node)) dismiss(); };
+    document.addEventListener("keydown", escape);
+    document.addEventListener("pointerdown", outside);
+    return () => { document.removeEventListener("keydown", escape); document.removeEventListener("pointerdown", outside); };
+  }, [open, pinned, onTogglePin]);
   const fromAgent = span.authorRole !== "customer";
   const palette = kindPalette(span.kind);
   const uncertain = span.confidence < 0.7;
@@ -238,6 +252,7 @@ function Mark({
 
   return (
     <span
+      ref={wrap}
       style={styles.markWrap}
       onMouseEnter={openSoon}
       onMouseLeave={closeNow}
@@ -245,6 +260,7 @@ function Mark({
       <button
         type="button"
         aria-expanded={open}
+        aria-controls={open ? id : undefined}
         aria-label={`${formatKind(span.kind)}: ${span.display}`}
         onClick={onTogglePin}
         // Keyboard users get the same reveal: hover alone would make every
@@ -332,8 +348,8 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 6,
     paddingBottom: 4,
   },
-  intentLabel: { fontSize: 11, color: "#68737d" },
-  intentValue: { fontSize: 13, fontWeight: 600, color: "#2f3941" },
+  intentLabel: { fontSize: 11, color: "var(--muted)" },
+  intentValue: { fontSize: 13, fontWeight: 600, color: "var(--text)" },
   thread: {
     padding: "12px 16px",
     display: "flex",
@@ -343,13 +359,13 @@ const styles: Record<string, React.CSSProperties> = {
   empty: {
     padding: "16px",
     fontSize: 12,
-    color: "#68737d",
+    color: "var(--muted)",
     lineHeight: 1.5,
   },
   expand: {
     background: "none",
     border: "none",
-    color: "#1f73b7",
+    color: "var(--accent)",
     fontSize: 11,
     cursor: "pointer",
     padding: 0,
@@ -370,7 +386,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     textTransform: "uppercase",
     letterSpacing: 0.5,
-    color: "#2f3941",
+    color: "var(--text)",
   },
   authorAgent: {
     fontSize: 10,
@@ -387,20 +403,20 @@ const styles: Record<string, React.CSSProperties> = {
   },
   timestamp: {
     fontSize: 10,
-    color: "#c2c8cc",
+    color: "var(--muted)",
     marginLeft: "auto",
   },
   bodyCustomer: {
     fontSize: 13,
     lineHeight: 1.6,
-    color: "#2f3941",
+    color: "var(--text)",
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
   },
   bodyAgent: {
     fontSize: 13,
     lineHeight: 1.6,
-    color: "#68737d",
+    color: "var(--muted)",
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
     borderLeft: "2px solid #e9ebed",
@@ -428,7 +444,7 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: "inherit",
   },
   markFlagged: {
-    textDecorationColor: "#cc3340",
-    background: "#fff0ee",
+    textDecorationColor: "var(--danger)",
+    background: "var(--danger-soft)",
   },
 };

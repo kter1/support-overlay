@@ -10,6 +10,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import ResolutionCard from "./components/ResolutionCard";
+import Icon from "./components/Icon";
 import {
   initZaf,
   isEmbedded,
@@ -20,11 +21,36 @@ import {
 } from "./zaf";
 
 const DEMO_TICKETS = [
-  { id: "10006", label: "Plain email — no order number", emoji: "✉️" },
-  { id: "10001", label: "Happy path — refund confirmed", emoji: "✅" },
-  { id: "10002", label: "Degraded — source unavailable", emoji: "⚠️" },
-  { id: "10003", label: "Awaiting operator reconciliation", emoji: "🔄" },
-  { id: "10005", label: "Already refunded — duplicate risk", emoji: "🛑" },
+  {
+    id: "10006",
+    label: "Plain email — no order number",
+    subject: "Refund request",
+    detail: "Match from the customer's words",
+  },
+  {
+    id: "10001",
+    label: "Happy path — refund confirmed",
+    subject: "Refund confirmed",
+    detail: "Matched order and payment",
+  },
+  {
+    id: "10002",
+    label: "Degraded — source unavailable",
+    subject: "Order record unavailable",
+    detail: "Preserved evidence",
+  },
+  {
+    id: "10003",
+    label: "Awaiting operator reconciliation",
+    subject: "Cancel order #3003",
+    detail: "Operator reconciliation scenario",
+  },
+  {
+    id: "10005",
+    label: "Already refunded — duplicate risk",
+    subject: "Still waiting on my refund",
+    detail: "Prior refund on another ticket",
+  },
 ];
 
 type LoadState =
@@ -43,13 +69,15 @@ type LoadState =
 function ticketFromUrl(): string | null {
   if (typeof window === "undefined") return null;
   const requested = new URLSearchParams(window.location.search).get("ticket");
-  return requested && /^[A-Za-z0-9_-]{1,64}$/.test(requested) ? requested : null;
+  return requested && /^[A-Za-z0-9_-]{1,64}$/.test(requested)
+    ? requested
+    : null;
 }
 
 export default function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [selectedTicket, setSelectedTicket] = useState(
-    () => ticketFromUrl() ?? "10006"
+    () => ticketFromUrl() ?? "10006",
   );
 
   useEffect(() => {
@@ -94,7 +122,11 @@ export default function App() {
   }, []);
 
   if (state.status === "loading") {
-    return <Panel><Muted>Loading resolution card…</Muted></Panel>;
+    return (
+      <Panel>
+        <Muted>Loading resolution card…</Muted>
+      </Panel>
+    );
   }
 
   if (state.status === "error") {
@@ -168,54 +200,89 @@ function StandaloneDemo({
   selectedTicket: string;
   onSelect: (id: string) => void;
 }) {
+  const ticket = DEMO_TICKETS.find((t) => t.id === selectedTicket);
   return (
-    <div style={styles.demoLayout}>
-      <div style={styles.demoSidebar}>
-        <div style={styles.demoBadge}>DEMO MODE</div>
-        <div style={styles.demoNote}>
-          Not running inside Zendesk. Installed as a Zendesk app, the ticket and
-          agent come from ZAF and the backend token stays server-side. See
-          docs/ZENDESK_APP.md.
+    <div className="workspace">
+      <header className="workspace-topbar">
+        <div className="brand">
+          <span className="brand-mark">
+            <Icon name="link" size={20} />
+          </span>
+          Support Overlay
         </div>
-
-        {DEMO_TICKETS.map((ticket) => {
-          const active = selectedTicket === ticket.id;
-          return (
+        <span className="topbar-context">Support workspace</span>
+        <span className="fixture-label">
+          <span />
+          Fixture data · Local demo
+        </span>
+      </header>
+      <aside className="ticket-rail" aria-label="Demo tickets">
+        <div className="rail-title">
+          <Icon /> Inbox <span>{DEMO_TICKETS.length}</span>
+        </div>
+        <p className="rail-subtitle">Refunds &amp; order support</p>
+        <nav className="ticket-list" aria-label="Tickets">
+          {DEMO_TICKETS.map((t) => (
             <button
-              key={ticket.id}
-              onClick={() => onSelect(ticket.id)}
-              style={{
-                ...styles.demoButton,
-                background: active ? "rgba(255,255,255,0.2)" : "transparent",
-                borderColor: active ? "rgba(255,255,255,0.5)" : "transparent",
-              }}
+              key={t.id}
+              aria-label={`Ticket ${t.id}: ${t.label}`}
+              aria-current={selectedTicket === t.id ? "page" : undefined}
+              className={`ticket-item ${selectedTicket === t.id ? "is-selected" : ""}`}
+              onClick={() => onSelect(t.id)}
             >
-              <div style={{ fontSize: 18, marginBottom: 4 }}>{ticket.emoji}</div>
-              <div>#{ticket.id}</div>
-              <div style={{ opacity: 0.8, fontSize: 11, marginTop: 2 }}>
-                {ticket.label}
-              </div>
+              <span className="ticket-number">
+                #{t.id}
+                <Icon name="arrow" size={14} />
+              </span>
+              <strong>{t.subject}</strong>
+              <span className="ticket-description">{t.detail}</span>
             </button>
-          );
-        })}
-      </div>
-
-      <div style={styles.demoPanel}>
-        <div style={styles.demoHeader}>
-          <div style={styles.demoLogo}>R</div>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "#2f3941" }}>
-            Resolution Card
-          </span>
-          <span style={{ fontSize: 11, color: "#68737d", marginLeft: "auto" }}>
-            Ticket #{selectedTicket}
+          ))}
+        </nav>
+        <div className="rail-footnote">
+          <Icon name="shield" size={16} />
+          <p>
+            Recorded scenarios.
+            <br />
+            No live provider connections.
+          </p>
+        </div>
+      </aside>
+      <main className="workspace-main">
+        <div className="mobile-ticket-picker">
+          <label htmlFor="ticket-picker">Demo ticket</label>
+          <select
+            id="ticket-picker"
+            value={selectedTicket}
+            onChange={(e) => onSelect(e.target.value)}
+          >
+            {!ticket && (
+              <option value={selectedTicket}>Ticket #{selectedTicket}</option>
+            )}
+            {DEMO_TICKETS.map((t) => (
+              <option key={t.id} value={t.id}>
+                #{t.id} — {t.subject}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="workspace-heading">
+          <div>
+            <div className="eyebrow">
+              Inbox <span>/</span> Ticket #{selectedTicket}
+            </div>
+            <h1>{ticket?.subject ?? `Ticket #${selectedTicket}`}</h1>
+          </div>
+          <span className="workspace-heading-note">
+            <Icon name="link" size={15} /> Conversation &amp; evidence
           </span>
         </div>
-
         <ResolutionCard
           zendeskTicketId={selectedTicket}
           agentId="agent-demo-001"
+          layout="workspace"
         />
-      </div>
+      </main>
     </div>
   );
 }
@@ -229,86 +296,15 @@ function Muted({ children }: { children: React.ReactNode }) {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  embedded: {
-    background: "#f8f9fa",
-    minHeight: 40,
-  },
-  muted: {
-    padding: 16,
-    fontSize: 13,
-    color: "#68737d",
-  },
+  embedded: { background: "var(--canvas)", minHeight: 40 },
+  muted: { padding: 16, fontSize: 13, color: "var(--muted)" },
   error: {
     padding: 16,
-    fontSize: 13,
-    color: "#8c2f2f",
-    background: "#fdf0f0",
-    borderRadius: 4,
+    color: "var(--danger)",
+    background: "var(--danger-soft)",
+    borderRadius: 8,
     margin: 12,
-  },
-  demoLayout: {
-    display: "flex",
-    minHeight: "100vh",
-  },
-  demoSidebar: {
-    width: 280,
-    background: "#1f73b7",
-    color: "white",
-    padding: "20px 16px",
-    flexShrink: 0,
-  },
-  demoBadge: {
-    fontSize: 12,
-    fontWeight: 700,
-    opacity: 0.75,
-    letterSpacing: 1,
-    marginBottom: 12,
-  },
-  demoNote: {
-    fontSize: 11,
-    opacity: 0.7,
-    marginBottom: 20,
-    lineHeight: 1.5,
-  },
-  demoButton: {
-    display: "block",
-    width: "100%",
-    border: "1px solid transparent",
-    borderRadius: 6,
-    color: "white",
-    padding: "10px 12px",
-    textAlign: "left",
-    cursor: "pointer",
-    marginBottom: 8,
-    fontSize: 13,
-    lineHeight: 1.4,
-  },
-  demoPanel: {
-    flex: 1,
-    maxWidth: 400,
-    background: "#f8f9fa",
-  },
-  demoHeader: {
-    background: "white",
-    borderBottom: "1px solid #e0e0e0",
-    padding: "10px 16px",
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-  },
-  demoLogo: {
-    width: 24,
-    height: 24,
-    borderRadius: 4,
-    background: "#1f73b7",
-    color: "white",
-    fontSize: 12,
-    fontWeight: 700,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
   },
 };
 
-// isEmbedded is re-exported for components that need to vary copy by mode.
 export { isEmbedded };

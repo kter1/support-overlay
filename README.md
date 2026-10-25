@@ -82,10 +82,13 @@ and the app has not been loaded in a live Zendesk instance.
 
 ## Demo video
 
-[Watch the 34-second demo](docs/media/support-overlay-demo.mp4) showing evidence
-matching, duplicate-refund warnings, and unavailable-source handling. Recorded
-against the local API and PostgreSQL with fixture simulators; it does not show
-live Stripe, Shopify, or Zendesk requests.
+[![Support Overlay workspace: conversation and merchant evidence](docs/media/support-overlay-workspace.png)](docs/media/support-overlay-demo.mp4)
+
+[Watch the workspace demo](docs/media/support-overlay-demo.mp4): follow a refund
+request from the customer's words to merchant records, then inspect prior-refund
+warnings and unavailable-source handling. Recorded against the local API and
+PostgreSQL with fixture simulators; it does not show live provider requests.
+See [the walkthrough and browser checks](docs/PORTFOLIO_DEMO.md).
 
 ## Quick Start
 
