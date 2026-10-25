@@ -52,7 +52,6 @@ and the app has not been loaded in a live Zendesk instance.
 - [Development](#development)
 - [Testing And CI](#testing-and-ci)
 - [Contributing](#contributing)
-- [License](#license)
 
 ## Features
 
@@ -211,7 +210,3 @@ real workers over a shared backlog.
 ## Contributing
 
 See `CONTRIBUTING.md`.
-
-## License
-
-MIT. See `LICENSE`.
